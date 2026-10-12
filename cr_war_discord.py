@@ -147,6 +147,7 @@ class Run:
         first = not cs["initialized"]
         recheck = set(cs.get("recheck", []))
         fetched, moved_now, found = [], [], []
+        skipped_other = 0
 
         for m in mem.get("items", []):
             ptag = m["tag"]
@@ -164,8 +165,13 @@ class Run:
             if moved:
                 moved_now.append(ptag)      # only real changes earn a second look next pass
             for b in blog:
-                if crimg.is_war(b):
-                    found.append((f"{ptag}|{b['battleTime']}", b))
+                if not crimg.is_war(b):
+                    continue
+                played_for = (((b.get("team") or [{}])[0]).get("clan") or {}).get("tag")
+                if played_for and norm_tag(played_for) != tag:
+                    skipped_other += 1          # e.g. a new member's war battles from his PREVIOUS clan
+                    continue
+                found.append((f"{ptag}|{b['battleTime']}", b))
 
         new = sorted([x for x in found if x[0] not in posted], key=lambda x: x[1]["battleTime"])
         to_post = new
@@ -207,6 +213,7 @@ class Run:
         if period:
             cs["period_index"] = period["index"]
         log(f"[{name}] pass done: checked {len(fetched)} players, new war battles {len(new)}, posted {sent}"
+            + (f", ignored {skipped_other} played for another clan" if skipped_other else "")
             + (f", period {period['type']}#{period['index']}" if period else ", no active race"))
 
     def embed(self, b):
