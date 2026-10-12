@@ -1,0 +1,8 @@
+{
+  "api_base": "https://proxy.royaleapi.dev/v1",
+  "timezone": "America/New_York",
+  "clans": [
+    { "name": "My First Clan",  "tag": "#9U82JJ0Y", "webhook_env": "DISCORD_WEBHOOK_CLAN1" },
+    { "name": "My Second Clan", "tag": "#V2GQU", "webhook_env": "DISCORD_WEBHOOK_CLAN2" }
+  ]
+}
