@@ -42,6 +42,7 @@ RARITY_FRAMES = False
 SHOW_TIER = True
 SHOW_EMBLEM = False       # clan badge emblem (off by default; --clan-emblem turns it on)
 SHOW_TOWER_TROOP = True
+CREDIT = "made with 🫶🏻 by ja"   # small line at the very bottom ("" to hide)
 SHOW_CROWNS = False       # crown score in the header duplicates 'TOWERS TAKEN'; --show-crowns brings it back
 ASSETS_DIR = None        # folder with official art (Fan Kit / cloned asset repos); see find/asset_img()
 CARD_STRETCH = 1.0       # >1 makes cards taller, <1 flatter
@@ -56,10 +57,11 @@ ESTIMATE_LEAGUE = True   # colour the frame from clan war trophies when the leag
 W = 1600
 HEAD_H = 190
 PANEL_GAP = 60
-PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 640, 222, 212, 56   # set by apply_layout()
+PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 672, 242, 232, 56   # set by apply_layout()
 DECK_H = 470
 BLOCK_GAP = 24
-FOOT_H = 70
+FOOT_H = 100
+TR_ROW = 42           # height of the trophy row (removed when nobody has trophies to show)
 PL_X, PR_X, PW = 40, 980, 580
 CEN_X, CEN_W = 640, 320
 CARD_W, CARD_H = 118, 142
@@ -93,12 +95,12 @@ TIER_PLATE = {"Bronze": (120, 70, 34), "Silver": (86, 96, 120), "Gold": (170, 11
 def apply_layout():
     global PANEL_H, IDENT_H, CARDS_OFF, NAME_Y
     if SHOW_EMBLEM:
-        PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 680, 262, 250, 100
+        PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 700, 282, 268, 100
     else:
-        PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 640, 222, 212, 56
+        PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 672, 242, 232, 56
 
 
-BOAT_HEAD, BOAT_PANEL_H = 215, 620
+BOAT_HEAD, BOAT_PANEL_H = 215, 632
 
 # ------------------------------------------------------------------- fonts --
 LILITA = "https://github.com/google/fonts/raw/main/ofl/lilitaone/LilitaOne-Regular.ttf"
@@ -1254,8 +1256,10 @@ def mode_label(battle, n):
 
 def draw_footer(canvas, battle, H, tz, n):
     d = ImageDraw.Draw(canvas)
-    text(d, (50, H - 36), mode_label(battle, n), 28, fill=(225, 230, 245), anchor="lm", stroke=2)
-    text(d, (W - 50, H - 36), fmt_time(battle["battleTime"], tz), 28, fill=(225, 230, 245), anchor="rm", stroke=2)
+    text(d, (50, H - 66), mode_label(battle, n), 28, fill=(225, 230, 245), anchor="lm", stroke=2)
+    text(d, (W - 50, H - 66), fmt_time(battle["battleTime"], tz), 28, fill=(225, 230, 245), anchor="rm", stroke=2)
+    if CREDIT:
+        text(d, (W // 2, H - 26), CREDIT, 19, fill=(208, 215, 238), stroke=2)
 
 
 # --------------------------------------------------------------- rounds ----
@@ -1352,7 +1356,10 @@ def render_single(battle, team, opp, n, out_path, tz, debug):
     head = HEAD_H if SHOW_CROWNS else (128 if sub else 100)
     if SHOW_EMBLEM:
         head = max(head, HEAD_H)
-    body = n * PANEL_H + (n - 1) * PANEL_GAP
+    has_tr = any(q.get("startingTrophies") is not None or q.get("trophyChange") for q in team[:n] + opp[:n])
+    poff = 0 if has_tr else TR_ROW                 # no trophy row: tighten instead of leaving a gap
+    ph, co = PANEL_H - poff, CARDS_OFF - poff
+    body = n * ph + (n - 1) * PANEL_GAP
     H = head + body + FOOT_H
     canvas = background(W, H)
     fix_king_hp(team, opp); fix_king_hp(opp, team)
@@ -1361,13 +1368,13 @@ def render_single(battle, team, opp, n, out_path, tz, debug):
     res, col = result_style(battle.get("_outcome", 0), 0)
     draw_header(canvas, res, col, tc, oc, sub=sub, score=SHOW_CROWNS)
     for i in range(n):
-        top = head + i * (PANEL_H + PANEL_GAP)
+        top = head + i * (ph + PANEL_GAP)
         for players, x, blue in ((team, PL_X, True), (opp, PR_X, False)):
             if i < len(players):
                 p = players[i]
-                panel_bg(canvas, x, top, PANEL_H, blue)
+                panel_bg(canvas, x, top, ph, blue)
                 draw_identity(canvas, p, x, top, blue)
-                draw_deck(canvas, p, p.get("cards", []), x, top, CARDS_OFF, PANEL_H)
+                draw_deck(canvas, p, p.get("cards", []), x, top, co, ph)
                 if debug:
                     debug_print(p, p.get("cards", []))
     draw_recap(canvas, team, opp, head, body)
@@ -1377,7 +1384,9 @@ def render_single(battle, team, opp, n, out_path, tz, debug):
 
 def render_duel(battle, tp, op, rt, ro, out_path, tz, debug):
     rc = len(rt)
-    y0 = HEAD_H + IDENT_H + BLOCK_GAP
+    has_tr = any(q.get("startingTrophies") is not None or q.get("trophyChange") for q in (tp, op))
+    ih = IDENT_H if has_tr else IDENT_H - TR_ROW
+    y0 = HEAD_H + ih + BLOCK_GAP
     H = y0 + rc * (DECK_H + BLOCK_GAP) - BLOCK_GAP + FOOT_H
     canvas = background(W, H)
 
@@ -1397,15 +1406,15 @@ def render_duel(battle, tp, op, rt, ro, out_path, tz, debug):
     draw_header(canvas, res, col, tw, ow, sub=sub)
 
     for x, p, blue in ((PL_X, tp, True), (PR_X, op, False)):
-        panel_bg(canvas, x, HEAD_H, IDENT_H, blue)
+        panel_bg(canvas, x, HEAD_H, ih, blue)
         draw_identity(canvas, p, x, HEAD_H, blue)
 
-    rrect(canvas, (CEN_X, HEAD_H, CEN_X + CEN_W, HEAD_H + IDENT_H), 30, fill=(250, 251, 255, 255))
+    rrect(canvas, (CEN_X, HEAD_H, CEN_X + CEN_W, HEAD_H + ih), 30, fill=(250, 251, 255, 255))
     d = ImageDraw.Draw(canvas)
     text(d, (CEN_X + CEN_W // 2, HEAD_H + 36), "DUEL", 38, fill=(30, 34, 70), stroke=0)
     rs = min(rc, 3)
     step = 58
-    y_start = HEAD_H + 74 + ((IDENT_H - 74 - 24) - (rs - 1) * step) / 2
+    y_start = HEAD_H + 74 + ((ih - 74 - 24) - (rs - 1) * step) / 2
     for i in range(rs):
         a, b = views[i]
         y = y_start + i * step
@@ -1531,7 +1540,7 @@ def render_boat(battle, out_path, tz, debug):
         if len(cards) > 8:
             draw_defenses(canvas, cards, x, BOAT_HEAD, BOAT_PANEL_H)
         elif cards:
-            draw_deck(canvas, pl, cards, x, BOAT_HEAD, 196, BOAT_PANEL_H)
+            draw_deck(canvas, pl, cards, x, BOAT_HEAD, 208, BOAT_PANEL_H)
         if debug:
             debug_print(pl, cards)
 
@@ -1693,7 +1702,7 @@ def demo_emblems(path):
 
 # -------------------------------------------------------------------- main --
 def main():
-    global OFFLINE, SHOW_CROWNS, ASSETS_DIR, SHOW_EMBLEM, SHOW_TOWER_TROOP, RARITY_FRAMES, WAR_LEAGUES, SHOW_TIER, CARD_STRETCH, BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR, ESTIMATE_LEAGUE
+    global OFFLINE, CREDIT, SHOW_CROWNS, ASSETS_DIR, SHOW_EMBLEM, SHOW_TOWER_TROOP, RARITY_FRAMES, WAR_LEAGUES, SHOW_TIER, CARD_STRETCH, BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR, ESTIMATE_LEAGUE
     ap = argparse.ArgumentParser(description="Clash Royale battle log image generator")
     ap.add_argument("--tag", default=DEFAULT_TAG)
     ap.add_argument("--key", default=os.environ.get("CR_API_KEY"))
@@ -1711,6 +1720,8 @@ def main():
     ap.add_argument("--rarity-frames", action="store_true", help="draw a rarity-coloured frame behind cards")
     ap.add_argument("--clan-emblem", action="store_true", help="draw the clan badge emblem (off by default)")
     ap.add_argument("--no-tower-troop", action="store_true", help="hide the tower troop card")
+    ap.add_argument("--credit", default=None, help='footer credit text (default: "made with 🫶🏻 by ja")')
+    ap.add_argument("--no-credit", action="store_true", help="hide the footer credit")
     ap.add_argument("--show-crowns", action="store_true",
                     help="show the crown score in the header (same number as 'TOWERS TAKEN', so off by default)")
     ap.add_argument("--no-tier", action="store_true", help="hide the league tier plate on clan emblems")
@@ -1738,6 +1749,10 @@ def main():
     RARITY_FRAMES, SHOW_TIER, CARD_STRETCH = a.rarity_frames, not a.no_tier, a.card_stretch
     BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR = a.bg, a.bg_dim, a.bg_blur, a.badge_dir
     SHOW_EMBLEM, SHOW_TOWER_TROOP, SHOW_CROWNS = a.clan_emblem, not a.no_tower_troop, a.show_crowns
+    if a.no_credit:
+        CREDIT = ""
+    elif a.credit is not None:
+        CREDIT = a.credit
     for cand in (a.assets_dir, "assets", str(Path(__file__).with_name("assets"))):
         if cand and os.path.isdir(cand):
             ASSETS_DIR = cand
