@@ -45,8 +45,7 @@ jobs:
       - name: Post new war battles
         env:
           CR_API_KEY: ${{ secrets.CR_API_KEY }}
-          DISCORD_WEBHOOK_CLAN1: ${{ secrets.DISCORD_WEBHOOK_CLAN1 }}
-          DISCORD_WEBHOOK_CLAN2: ${{ secrets.DISCORD_WEBHOOK_CLAN2 }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}      # every secret, so config.json can use ANY webhook secret name
         run: python cr_war_discord.py --backfill "${{ github.event.inputs.backfill || '0' }}"
 
       - name: Save state
