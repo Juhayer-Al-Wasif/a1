@@ -18,7 +18,8 @@ config.json is just a list of things to watch:
 
     python cr_war_discord.py                          # one pass (what GitHub Actions runs)
     python cr_war_discord.py --loop 300               # keep running on a PC / Raspberry Pi
-    python cr_war_discord.py --dry-run --backfill 2   # write the 2 newest matching battles to ./dry_run
+    python cr_war_discord.py --backfill 2             # re-send the 2 newest matching battles to every watch
+    python cr_war_discord.py --dry-run --backfill 2   # write them to ./dry_run instead of posting
 
 Training day vs battle day: the battle log does not say. The clan's live /currentriverrace does
 (periodType + periodIndex), so the bot keeps a small "clock" per clan: it notices when the day changes and, because
@@ -312,6 +313,7 @@ class Run:
         self.state = {"watches": {}, "clocks": {}} if dry else load_state(state_path)
         self.meta = None
         self.rr, self.clock_checked = {}, set()
+        self.problems = 0
         self.tmp = Path(tempfile.mkdtemp(prefix="crwatch_"))
 
     # ---- shared helpers
@@ -345,33 +347,44 @@ class Run:
         if period:
             battle["_period"] = period
         out = self.tmp / "battle.png"
-        if not crimg.render_battle(battle, out, self.cfg.get("timezone", "America/New_York")):
+        if not crimg.render_battle(battle, out, self.cfg.get("timezone", "UTC")):
             return None
         return out.read_bytes()
 
     def embed(self, b):
-        res = {1: ("✅ Victory", 0x2ECC71), -1: ("❌ Defeat", 0xE74C3C), 0: ("➖ Draw", 0x95A5A6)}[result_of(b)]
-        n = max(len(b.get("team") or []), 1)
-        label = crimg.mode_label(b, n)
-        return {"title": f"{res[0]} · {label}"[:256],
-                "description": (side_text(b.get("team"), "🟦") + "\n" + side_text(b.get("opponent"), "🟥"))[:4000],
-                "color": res[1], "timestamp": parse_bt(b["battleTime"]).isoformat()}
+        """Names (as RoyaleAPI links) + the time. Result/mode are already in the image, so no title.
+        Side colour: CR blue = win, red = loss, neutral white for friendly / clanmate battles."""
+        r = result_of(b)
+        if "friendly" in categories(b):
+            color = 0xFFFFFF                      # friendly battles: not a win or a loss
+        else:
+            color = {1: 0x2480F5, -1: 0xE74C3C, 0: 0x95A5A6}[r]
+        lines = [side_text(b.get("team"), "🟦"), side_text(b.get("opponent"), "🟥")]
+        when = parse_bt(b["battleTime"])
+        mode = str(self.cfg.get("embed_time", "utc")).lower()
+        if mode == "utc":                         # the same text for everybody, whatever their time zone
+            hour12 = int(when.strftime("%I"))
+            lines.append(f"🕒 {when:%b} {when.day}, {when.year} · {hour12}:{when:%M} {when:%p} UTC")
+        elif mode == "local":                     # Discord shows it in each viewer's own time zone
+            lines.append(f"🕒 <t:{int(when.timestamp())}:f>")
+        return {"description": "\n".join(lines)[:4000], "color": color}
 
     # ---- collecting battles
     def collect_player(self, w):
         st, blog = self.api.get(f"/players/{enc(w['tag'])}/battlelog")
         if blog is None:
-            log(f"[{w['label']}] battle log request failed ({st})"); return None
+            log(f"[{w['label']}] battle log request failed ({st}) - is the player tag right?"); self.problems += 1; return None
         return [(f"{w['tag']}|{b['battleTime']}", b) for b in blog]
 
     def collect_clan(self, w, ws, first):
         tag = w["tag"]
         st, mem = self.api.get(f"/clans/{enc(tag)}/members?limit=60")
         if not mem:
-            log(f"[{w['label']}] members request failed ({st}); skipping this pass"); return None
+            log(f"[{w['label']}] members request failed ({st}) - is the clan tag right?"); self.problems += 1; return None
         rr = self.rr.get(tag) or {}
         parts = {p["tag"]: p for p in (rr.get("clan") or {}).get("participants", [])}
         war_only = all(m in WAR_MODES for m in w["modes"])
+        scan_all = first or self.backfill > 0
         recheck = set(ws.get("recheck", []))
         found, moved_now, fetched, skipped = [], [], 0, 0
         for m in mem.get("items", []):
@@ -380,8 +393,8 @@ class Run:
             sig = [p.get("decksUsed"), p.get("decksUsedToday"), p.get("fame"), p.get("boatAttacks")]
             moved = first or sig != ws["sig"].get(ptag) or m.get("lastSeen") != ws["seen"].get(ptag)
             ws["sig"][ptag], ws["seen"][ptag] = sig, m.get("lastSeen")
-            # war-only watches fetch just the players whose war counters moved; other modes need everyone
-            if war_only and not (moved or ptag in recheck):
+            # war-only watches fetch just the players whose war counters moved; other modes (and backfill) need everyone
+            if war_only and not scan_all and not (moved or ptag in recheck):
                 continue
             time.sleep(0.2)
             st, blog = self.api.get(f"/players/{enc(ptag)}/battlelog")
@@ -419,13 +432,20 @@ class Run:
             r = result_of(b)
             return w["results"] == "all" or (w["results"] == "win" and r == 1) or (w["results"] == "loss" and r == -1)
 
-        candidates = sorted([x for x in found if wanted(x[1]) and x[0] not in posted],
-                            key=lambda x: x[1]["battleTime"])
-        if first:                                   # baseline: remember everything, post only --backfill N
+        matching = sorted([x for x in found if wanted(x[1])], key=lambda x: x[1]["battleTime"])
+        if first:                                   # baseline: remember everything that already exists
             for key, _ in found:
                 posted.add(key)
-            candidates = candidates[-self.backfill:] if self.backfill > 0 else []
-            log(f"[{w['label']}] first pass: {len(found)} existing battles recorded, posting {len(candidates)}")
+        if self.backfill > 0:                       # backfill N: the N newest matching battles, for EVERY watch,
+            candidates = matching[-self.backfill:]  # even ones posted before (use it to test; leave it 0 normally)
+            if not candidates:
+                log(f"[{w['label']}] nothing to backfill: read {len(found)} battles "
+                    f"({sum(1 for _, b in found if crimg.is_war(b))} war), none match this watch's filters "
+                    f"(modes {w['modes']}, results {w['results']})")
+        else:
+            candidates = [] if first else [x for x in matching if x[0] not in posted]
+        if first and self.backfill == 0:
+            log(f"[{w['label']}] first pass: {len(found)} existing battles recorded, nothing posted")
 
         hook = None if self.dry else resolve_webhook(w["webhook"])
         if not self.dry and not hook:
@@ -447,7 +467,7 @@ class Run:
             try:
                 png = self.render(b, period)
             except Exception as e:
-                log(f"[{w['label']}] render failed for {key}: {e!r}"); posted.add(key); continue
+                log(f"[{w['label']}] render failed for {key}: {e!r}"); posted.add(key); self.problems += 1; continue
             if png is None:
                 posted.add(key); continue
             fname = f"battle_{b['battleTime']}.png"
@@ -458,7 +478,8 @@ class Run:
             try:
                 post_webhook(hook, png, fname, self.embed(b), w.get("bot_name") or self.cfg.get("bot_name") or DEFAULT_BOT)
             except Exception as e:
-                log(f"[{w['label']}] Discord post failed for {key}: {e!r} - will retry next pass"); continue
+                log(f"[{w['label']}] Discord post failed for {key}: {e!r} - will retry next pass")
+                self.problems += 1; continue
             posted.add(key); sent += 1
             ws["posted"] = list(dict.fromkeys(ws["posted"] + [key]))[-KEEP_KEYS:]
             save_state(self.state_path, self.state)
@@ -477,7 +498,8 @@ def main():
     ap.add_argument("--key", default=os.environ.get("CR_API_KEY"))
     ap.add_argument("--loop", type=int, default=0, help="seconds between passes (0 = single pass)")
     ap.add_argument("--dry-run", action="store_true", help="write images to ./dry_run, post nothing, save no state")
-    ap.add_argument("--backfill", type=int, default=0, help="on a watch's first pass, post its N newest matching battles")
+    ap.add_argument("--backfill", type=int, default=0,
+                    help="post the N newest matching battles to EVERY watch now, even if posted before (testing)")
     a = ap.parse_args()
     if not a.key:
         sys.exit("Set CR_API_KEY")
@@ -509,12 +531,15 @@ def main():
             except RuntimeError as e:
                 log("ERROR:", e); sys.exit(1)
             except Exception as e:
-                log(f"[{w['label']}] unexpected error: {e!r}")
+                log(f"[{w['label']}] unexpected error: {e!r}"); run.problems += 1
         if not a.dry_run:
             save_state(a.state, run.state)
         if not a.loop:
             break
+        run.problems = 0
         time.sleep(a.loop)
+    if run.problems:
+        sys.exit(1)                      # makes the GitHub Actions run show red when something went wrong
 
 
 if __name__ == "__main__":
