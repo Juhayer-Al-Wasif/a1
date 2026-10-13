@@ -1,7 +1,7 @@
 {
   "bot_name": "ja's watcher",
-  "timezone": "America/New_York",
-
+ "timezone": "UTC",
+  "embed_time": "utc",
   "watch": [
     { "clan": "#9U82JJ0Y", "webhook": "DISCORD_WEBHOOK_CLAN1" },
 
