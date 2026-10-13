@@ -60,7 +60,7 @@ PANEL_GAP = 60
 PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 672, 242, 232, 56   # set by apply_layout()
 DECK_H = 470
 BLOCK_GAP = 24
-FOOT_H = 100
+FOOT_H = 84
 TR_ROW = 42           # height of the trophy row (removed when nobody has trophies to show)
 PL_X, PR_X, PW = 40, 980, 580
 CEN_X, CEN_W = 640, 320
@@ -1255,11 +1255,25 @@ def mode_label(battle, n):
 
 
 def draw_footer(canvas, battle, H, tz, n):
+    """mode label (left) | credit (centre) | time (right), one row, one size. If they cannot fit side by side even
+    at the smallest size (very long mode names) the credit moves to a second row."""
     d = ImageDraw.Draw(canvas)
-    text(d, (50, H - 66), mode_label(battle, n), 28, fill=(225, 230, 245), anchor="lm", stroke=2)
-    text(d, (W - 50, H - 66), fmt_time(battle["battleTime"], tz), 28, fill=(225, 230, 245), anchor="rm", stroke=2)
-    if CREDIT:
-        text(d, (W // 2, H - 26), CREDIT, 19, fill=(208, 215, 238), stroke=2)
+    left, right = mode_label(battle, n), fmt_time(battle["battleTime"], tz)
+    col = (225, 230, 245)
+    for size in (28, 26, 24, 22, 20):
+        wl, wr = text_width(left, size), text_width(right, size)
+        wc = text_width(CREDIT, size) if CREDIT else 0
+        if not CREDIT or (50 + wl + 30 <= W / 2 - wc / 2 and W / 2 + wc / 2 + 30 <= W - 50 - wr):
+            y = H - FOOT_H / 2
+            text(d, (50, y), left, size, fill=col, anchor="lm", stroke=2)
+            text(d, (W - 50, y), right, size, fill=col, anchor="rm", stroke=2)
+            if CREDIT:
+                text(d, (W // 2, y), CREDIT, size, fill=col, stroke=2)
+            return
+    size = 24                                                        # fallback: two rows, same size
+    text(d, (50, H - 58), left, size, fill=col, anchor="lm", stroke=2)
+    text(d, (W - 50, H - 58), right, size, fill=col, anchor="rm", stroke=2)
+    text(d, (W // 2, H - 24), CREDIT, size, fill=col, stroke=2)
 
 
 # --------------------------------------------------------------- rounds ----
@@ -1324,9 +1338,9 @@ def battle_outcome(b):
 
 def result_style(win, lose):
     if win > lose:
-        return "VICTORY", (120, 255, 140)
+        return "WIN", (120, 255, 140)
     if win < lose:
-        return "DEFEAT", (255, 110, 110)
+        return "LOSE", (255, 110, 110)
     return "DRAW", (220, 225, 240)
 
 
@@ -1386,7 +1400,11 @@ def render_duel(battle, tp, op, rt, ro, out_path, tz, debug):
     rc = len(rt)
     has_tr = any(q.get("startingTrophies") is not None or q.get("trophyChange") for q in (tp, op))
     ih = IDENT_H if has_tr else IDENT_H - TR_ROW
-    y0 = HEAD_H + ih + BLOCK_GAP
+    per = period_label(battle)
+    head = HEAD_H if SHOW_CROWNS else (128 if per else 100)       # no score row -> compact header
+    if SHOW_EMBLEM:
+        head = max(head, HEAD_H)
+    y0 = head + ih + BLOCK_GAP
     H = y0 + rc * (DECK_H + BLOCK_GAP) - BLOCK_GAP + FOOT_H
     canvas = background(W, H)
 
@@ -1400,21 +1418,22 @@ def render_duel(battle, tp, op, rt, ro, out_path, tz, debug):
     tcrowns = sum(v[0].get("crowns") or 0 for v in views) or tp.get("crowns") or 0
     ocrowns = sum(v[1].get("crowns") or 0 for v in views) or op.get("crowns") or 0
     res, col = result_style(tw, ow)
-    per = period_label(battle)
-    sub = ("ROUNDS WON" + (f"  ·  CROWNS {tcrowns} - {ocrowns}" if SHOW_CROWNS else "")
-           + (f"  ·  {per.upper()}" if per else ""))
-    draw_header(canvas, res, col, tw, ow, sub=sub)
+    if SHOW_CROWNS:
+        sub = ("ROUNDS WON" + f"  ·  CROWNS {tcrowns} - {ocrowns}" + (f"  ·  {per.upper()}" if per else ""))
+        draw_header(canvas, res, col, tw, ow, sub=sub)
+    else:
+        draw_header(canvas, res, col, tw, ow, sub=(per.upper() if per else None), score=False)
 
     for x, p, blue in ((PL_X, tp, True), (PR_X, op, False)):
-        panel_bg(canvas, x, HEAD_H, ih, blue)
-        draw_identity(canvas, p, x, HEAD_H, blue)
+        panel_bg(canvas, x, head, ih, blue)
+        draw_identity(canvas, p, x, head, blue)
 
-    rrect(canvas, (CEN_X, HEAD_H, CEN_X + CEN_W, HEAD_H + ih), 30, fill=(250, 251, 255, 255))
+    rrect(canvas, (CEN_X, head, CEN_X + CEN_W, head + ih), 30, fill=(250, 251, 255, 255))
     d = ImageDraw.Draw(canvas)
-    text(d, (CEN_X + CEN_W // 2, HEAD_H + 36), "DUEL", 38, fill=(30, 34, 70), stroke=0)
+    text(d, (CEN_X + CEN_W // 2, head + 36), "DUEL", 38, fill=(30, 34, 70), stroke=0)
     rs = min(rc, 3)
     step = 58
-    y_start = HEAD_H + 74 + ((ih - 74 - 24) - (rs - 1) * step) / 2
+    y_start = head + 74 + ((ih - 74 - 24) - (rs - 1) * step) / 2
     for i in range(rs):
         a, b = views[i]
         y = y_start + i * step
