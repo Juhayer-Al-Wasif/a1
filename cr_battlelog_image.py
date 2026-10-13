@@ -43,6 +43,8 @@ SHOW_TIER = True
 SHOW_EMBLEM = False       # clan badge emblem (off by default; --clan-emblem turns it on)
 SHOW_TOWER_TROOP = True
 CREDIT = "made with 🫶🏻 by ja"   # small line at the very bottom ("" to hide)
+CREDIT_COLOR = (225, 230, 245)   # colour of the whole credit line
+CREDIT_NAME_COLOR = None         # colour of just the last word ("ja"); None = same as CREDIT_COLOR
 SHOW_CROWNS = False       # crown score in the header duplicates 'TOWERS TAKEN'; --show-crowns brings it back
 ASSETS_DIR = None        # folder with official art (Fan Kit / cloned asset repos); see find/asset_img()
 CARD_STRETCH = 1.0       # >1 makes cards taller, <1 flatter
@@ -1254,6 +1256,44 @@ def mode_label(battle, n):
     return " · ".join(x for x in parts if x)
 
 
+def parse_color(txt):
+    """'#RRGGBB', 'RRGGBB', '#RGB' or 'r,g,b' -> (r, g, b)."""
+    t = str(txt).strip().lstrip("#")
+    try:
+        if "," in t:
+            r, g, b = [int(x) for x in t.split(",")]
+        elif len(t) == 3:
+            r, g, b = [int(c * 2, 16) for c in t]
+        elif len(t) == 6:
+            r, g, b = int(t[0:2], 16), int(t[2:4], 16), int(t[4:6], 16)
+        else:
+            raise ValueError
+        if not all(0 <= v <= 255 for v in (r, g, b)):
+            raise ValueError
+        return (r, g, b)
+    except Exception:
+        raise ValueError(f"'{txt}' is not a colour - use something like #FFD700, FFD700, #FD0 or 255,215,0")
+
+
+def _credit_parts(size):
+    """(prefix, name, prefix_w, space_w, name_w, total_w). The name is the credit's last word ('ja')."""
+    txt = (CREDIT or "").strip()
+    i = txt.rfind(" ")
+    prefix, name = (txt[:i].strip(), txt[i + 1:]) if i >= 0 else ("", txt)
+    sp = chain(size)[0].getlength(" ")
+    pw, nw = (text_width(prefix, size) if prefix else 0), text_width(name, size)
+    return prefix, name, pw, sp, nw, pw + (sp if prefix else 0) + nw
+
+
+def _draw_credit(d, cx, y, size):
+    prefix, name, pw, sp, nw, total = _credit_parts(size)
+    x0 = cx - total / 2
+    base = CREDIT_COLOR
+    if prefix:
+        text(d, (x0, y), prefix, size, fill=base, anchor="lm", stroke=2)
+    text(d, (x0 + pw + (sp if prefix else 0), y), name, size, fill=CREDIT_NAME_COLOR or base, anchor="lm", stroke=2)
+
+
 def draw_footer(canvas, battle, H, tz, n):
     """mode label (left) | credit (centre) | time (right), one row, one size. If they cannot fit side by side even
     at the smallest size (very long mode names) the credit moves to a second row."""
@@ -1262,18 +1302,18 @@ def draw_footer(canvas, battle, H, tz, n):
     col = (225, 230, 245)
     for size in (28, 26, 24, 22, 20):
         wl, wr = text_width(left, size), text_width(right, size)
-        wc = text_width(CREDIT, size) if CREDIT else 0
+        wc = _credit_parts(size)[5] if CREDIT else 0
         if not CREDIT or (50 + wl + 30 <= W / 2 - wc / 2 and W / 2 + wc / 2 + 30 <= W - 50 - wr):
             y = H - FOOT_H / 2
             text(d, (50, y), left, size, fill=col, anchor="lm", stroke=2)
             text(d, (W - 50, y), right, size, fill=col, anchor="rm", stroke=2)
             if CREDIT:
-                text(d, (W // 2, y), CREDIT, size, fill=col, stroke=2)
+                _draw_credit(d, W // 2, y, size)
             return
     size = 24                                                        # fallback: two rows, same size
     text(d, (50, H - 58), left, size, fill=col, anchor="lm", stroke=2)
     text(d, (W - 50, H - 58), right, size, fill=col, anchor="rm", stroke=2)
-    text(d, (W // 2, H - 24), CREDIT, size, fill=col, stroke=2)
+    _draw_credit(d, W // 2, H - 24, size)
 
 
 # --------------------------------------------------------------- rounds ----
@@ -1721,7 +1761,7 @@ def demo_emblems(path):
 
 # -------------------------------------------------------------------- main --
 def main():
-    global OFFLINE, CREDIT, SHOW_CROWNS, ASSETS_DIR, SHOW_EMBLEM, SHOW_TOWER_TROOP, RARITY_FRAMES, WAR_LEAGUES, SHOW_TIER, CARD_STRETCH, BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR, ESTIMATE_LEAGUE
+    global OFFLINE, CREDIT, CREDIT_COLOR, CREDIT_NAME_COLOR, SHOW_CROWNS, ASSETS_DIR, SHOW_EMBLEM, SHOW_TOWER_TROOP, RARITY_FRAMES, WAR_LEAGUES, SHOW_TIER, CARD_STRETCH, BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR, ESTIMATE_LEAGUE
     ap = argparse.ArgumentParser(description="Clash Royale battle log image generator")
     ap.add_argument("--tag", default=DEFAULT_TAG)
     ap.add_argument("--key", default=os.environ.get("CR_API_KEY"))
@@ -1741,6 +1781,10 @@ def main():
     ap.add_argument("--no-tower-troop", action="store_true", help="hide the tower troop card")
     ap.add_argument("--credit", default=None, help='footer credit text (default: "made with 🫶🏻 by ja")')
     ap.add_argument("--no-credit", action="store_true", help="hide the footer credit")
+    ap.add_argument("--credit-color", default=None, metavar="HEX",
+                    help='colour of the whole credit line, e.g. "#FFD700" (default #E1E6F5)')
+    ap.add_argument("--credit-name-color", default=None, metavar="HEX",
+                    help='colour of only the name at the end of the credit ("ja"), e.g. "#FF5599"')
     ap.add_argument("--show-crowns", action="store_true",
                     help="show the crown score in the header (same number as 'TOWERS TAKEN', so off by default)")
     ap.add_argument("--no-tier", action="store_true", help="hide the league tier plate on clan emblems")
@@ -1768,6 +1812,13 @@ def main():
     RARITY_FRAMES, SHOW_TIER, CARD_STRETCH = a.rarity_frames, not a.no_tier, a.card_stretch
     BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR = a.bg, a.bg_dim, a.bg_blur, a.badge_dir
     SHOW_EMBLEM, SHOW_TOWER_TROOP, SHOW_CROWNS = a.clan_emblem, not a.no_tower_troop, a.show_crowns
+    try:
+        if a.credit_color:
+            CREDIT_COLOR = parse_color(a.credit_color)
+        if a.credit_name_color:
+            CREDIT_NAME_COLOR = parse_color(a.credit_name_color)
+    except ValueError as e:
+        sys.exit(str(e))
     if a.no_credit:
         CREDIT = ""
     elif a.credit is not None:
