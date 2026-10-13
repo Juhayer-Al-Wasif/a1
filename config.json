@@ -1,8 +1,12 @@
 {
-  "api_base": "https://proxy.royaleapi.dev/v1",
+  "bot_name": "ja's watcher",
   "timezone": "America/New_York",
-  "clans": [
-    { "name": "My First Clan",  "tag": "#9U82JJ0Y", "webhook_env": "DISCORD_WEBHOOK_CLAN1" },
-    { "name": "My Second Clan", "tag": "#V2GQU", "webhook_env": "DISCORD_WEBHOOK_CLAN2" }
+
+  "watch": [
+    { "clan": "#9U82JJ0Y", "webhook": "DISCORD_WEBHOOK_CLAN1" },
+
+    { "clan": "#V2GQU", "webhook": "DISCORD_WEBHOOK_CLAN2", "days": "battle" },
+
+    { "player": "#PLAYERTAG", "webhook": "DISCORD_WEBHOOK_JA", "modes": ["ladder", "ranked"], "results": "win" }
   ]
 }
