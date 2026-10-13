@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       backfill:
-        description: "On a clan's FIRST pass, post its N newest war battles (0 = just record what exists)"
+        description: "Post the N newest matching battles to EVERY watch now, even if posted before (0 = normal run)"
         default: "0"
 
 concurrency:
