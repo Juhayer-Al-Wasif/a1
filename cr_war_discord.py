@@ -18,7 +18,7 @@ config.json is just a list of things to watch:
 
     python cr_war_discord.py                          # one pass (what GitHub Actions runs)
     python cr_war_discord.py --loop 300               # keep running on a PC / Raspberry Pi
-    python cr_war_discord.py --backfill 2             # re-send the 2 newest matching battles to every watch
+    python cr_war_discord.py --backfill 4             # post 4 DIFFERENT layouts to every watch: boat, 1v1, duel 2-0, duel 2-1
     python cr_war_discord.py --dry-run --backfill 2   # write them to ./dry_run instead of posting
 
 Training day vs battle day: the battle log does not say. The clan's live /currentriverrace does
@@ -135,6 +135,18 @@ def load_config(path):
             errors.append(f'{where}: "days" must be all, battle or training')
         watches.append({"kind": kind, "tag": tag, "webhook": str(w["webhook"]), "modes": modes, "results": results,
                         "days": days, "label": w.get("name") or tag, "bot_name": w.get("bot_name")})
+    if str(cfg.get("embed_time", "discord")).lower() not in ("discord", "utc", "none"):
+        errors.append('"embed_time" must be discord, utc or none')
+    if str(cfg.get("embed_time_style", "F")) not in list("tTdDfFR"):
+        errors.append('"embed_time_style" must be one of t T d D f F R (Discord timestamp styles)')
+    if str(cfg.get("embed_time_position", "below")).lower() not in ("below", "inside"):
+        errors.append('"embed_time_position" must be below or inside')
+    for key in ("credit_color", "credit_name_color"):
+        if cfg.get(key):
+            try:
+                crimg.parse_color(cfg[key])
+            except ValueError as e:
+                errors.append(f'"{key}": {e}')
     if errors:
         sys.exit("config.json problems:\n  - " + "\n  - ".join(errors))
     return cfg, watches
@@ -196,8 +208,8 @@ def matches_modes(b, modes):
     return False
 
 
-def result_of(b):
-    """+1 win / -1 loss / 0 draw-or-unknown. Duels are decided by rounds won, like the image shows."""
+def duel_score(b):
+    """(rounds won, rounds lost) for a war duel, else None."""
     team, opp = b.get("team") or [], b.get("opponent") or []
     if len(team) == 1 and len(opp) == 1:
         rt, ro = crimg.get_rounds(team[0]), crimg.get_rounds(opp[0])
@@ -207,8 +219,46 @@ def result_of(b):
             for a, c in views:
                 crimg.fix_king_hp([a], [c]); crimg.fix_king_hp([c], [a])
             w = [crimg.round_winner(a, c) for a, c in views]
-            return (w.count(1) > w.count(-1)) - (w.count(1) < w.count(-1))
+            return w.count(1), w.count(-1)
+    return None
+
+
+def result_of(b):
+    """+1 win / -1 loss / 0 draw-or-unknown. Duels are decided by rounds won, like the image shows."""
+    sc = duel_score(b)
+    if sc:
+        return (sc[0] > sc[1]) - (sc[0] < sc[1])
     return crimg.battle_outcome(b)
+
+
+KIND_ORDER = ["boat", "single", "duel_sweep", "duel_decider", "2v2", "duel_other"]
+KIND_LABEL = {"boat": "boat battle", "single": "1v1", "duel_sweep": "duel 2-0/0-2", "duel_decider": "duel 2-1/1-2",
+              "2v2": "2v2", "duel_other": "duel (other score)"}
+
+
+def layout_kind(b):
+    """Which image layout / result shape this battle produces."""
+    if str(b.get("type", "")).lower() == "boatbattle":
+        return "boat"
+    sc = duel_score(b)
+    if sc:
+        hi, lo = max(sc), min(sc)
+        return "duel_sweep" if (hi, lo) == (2, 0) else "duel_decider" if (hi, lo) == (2, 1) else "duel_other"
+    return "2v2" if len(b.get("team") or []) == 2 else "single"
+
+
+def pick_variety(matching, n):
+    """backfill N: one battle per layout - boat battle, 1v1, duel 2-0/0-2, duel 2-1/1-2 (newest of each) - so every
+    image style gets tested. N > 4 goes round again; a missing layout is skipped."""
+    by = {k: [] for k in KIND_ORDER}
+    for item in sorted(matching, key=lambda x: x[1]["battleTime"], reverse=True):
+        by[layout_kind(item[1])].append(item)
+    chosen = []
+    while len(chosen) < n and any(by.values()):
+        for k in KIND_ORDER:
+            if by[k] and len(chosen) < n:
+                chosen.append(by[k].pop(0))
+    return chosen
 
 
 # ---------------------------------------------------- the clan "clock" (training / battle day)
@@ -292,9 +342,9 @@ def side_text(players, dot):
     return "\n".join(lines) or f"{dot} ?"
 
 
-def post_webhook(url, png, filename, embed, username):
-    embed = dict(embed, image={"url": f"attachment://{filename}"})
-    payload = {"username": username[:80], "embeds": [embed], "allowed_mentions": {"parse": []}}
+def post_webhook(url, png, filename, embeds, username):
+    embeds = [dict(embeds[0], image={"url": f"attachment://{filename}"})] + list(embeds[1:])   # image in the first box
+    payload = {"username": username[:80], "embeds": embeds, "allowed_mentions": {"parse": []}}
     for attempt in range(3):
         r = requests.post(url + ("&" if "?" in url else "?") + "wait=true",
                           data={"payload_json": json.dumps(payload)},
@@ -314,6 +364,7 @@ class Run:
         self.meta = None
         self.rr, self.clock_checked = {}, set()
         self.problems = 0
+        self.summary = []
         self.tmp = Path(tempfile.mkdtemp(prefix="crwatch_"))
 
     # ---- shared helpers
@@ -351,23 +402,34 @@ class Run:
             return None
         return out.read_bytes()
 
-    def embed(self, b):
-        """Names (as RoyaleAPI links) + the time. Result/mode are already in the image, so no title.
-        Side colour: CR blue = win, red = loss, neutral white for friendly / clanmate battles."""
+    def embeds(self, b):
+        """Box 1: names (RoyaleAPI links) + the image. Box 2 (under the image): the battle time as a Discord timestamp,
+        which each viewer sees in their own language/time zone, e.g. <t:1791882480:F> = "Tuesday, October 13, 2026 at
+        3:08 PM". (Discord can't render timestamps inside an embed footer, hence the thin second box.)
+        Side colour: CR blue = win, red = loss, white for friendly / clanmate battles."""
         r = result_of(b)
         if "friendly" in categories(b):
             color = 0xFFFFFF                      # friendly battles: not a win or a loss
         else:
             color = {1: 0x2480F5, -1: 0xE74C3C, 0: 0x95A5A6}[r]
-        lines = [side_text(b.get("team"), "🟦"), side_text(b.get("opponent"), "🟥")]
+        main = {"description": (side_text(b.get("team"), "🟦") + "\n" + side_text(b.get("opponent"), "🟥"))[:4000],
+                "color": color}
         when = parse_bt(b["battleTime"])
-        mode = str(self.cfg.get("embed_time", "utc")).lower()
-        if mode == "utc":                         # the same text for everybody, whatever their time zone
-            hour12 = int(when.strftime("%I"))
-            lines.append(f"🕒 {when:%b} {when.day}, {when.year} · {hour12}:{when:%M} {when:%p} UTC")
-        elif mode == "local":                     # Discord shows it in each viewer's own time zone
-            lines.append(f"🕒 <t:{int(when.timestamp())}:f>")
-        return {"description": "\n".join(lines)[:4000], "color": color}
+        mode = str(self.cfg.get("embed_time", "discord")).lower()
+        style = str(self.cfg.get("embed_time_style", "F"))
+        if mode == "discord":
+            line = f"<t:{int(when.timestamp())}:{style}>"
+        elif mode == "utc":                       # the same plain text for everybody
+            line = f"{when:%A}, {when:%B} {when.day}, {when.year} at {int(when.strftime('%I'))}:{when:%M} {when:%p} UTC"
+        else:
+            line = None
+        out = [main]
+        if line:
+            if str(self.cfg.get("embed_time_position", "below")).lower() == "inside":
+                main["description"] += "\n" + line
+            else:
+                out.append({"description": line, "color": color})
+        return out
 
     # ---- collecting battles
     def collect_player(self, w):
@@ -387,6 +449,7 @@ class Run:
         scan_all = first or self.backfill > 0
         recheck = set(ws.get("recheck", []))
         found, moved_now, fetched, skipped = [], [], 0, 0
+        war_by_clan, n_members = {}, len(mem.get("items", []))
         for m in mem.get("items", []):
             ptag = m["tag"]
             p = parts.get(ptag, {})
@@ -405,11 +468,15 @@ class Run:
                 moved_now.append(ptag)
             for b in blog:
                 played_for = (((b.get("team") or [{}])[0]).get("clan") or {}).get("tag")
+                if crimg.is_war(b):
+                    k = norm_tag(played_for) if played_for else "(no clan)"
+                    war_by_clan[k] = war_by_clan.get(k, 0) + 1
                 if played_for and norm_tag(played_for) != tag:
                     skipped += 1                    # e.g. a new member's battles from his PREVIOUS clan
                     continue
                 found.append((f"{ptag}|{b['battleTime']}", b))
         ws["recheck"] = moved_now if war_only else []
+        w["_diag"] = {"members": n_members, "fetched": fetched, "war_by_clan": war_by_clan}
         w["_stats"] = f"checked {fetched} players" + (f", ignored {skipped} played for another clan" if skipped else "")
         return found
 
@@ -421,6 +488,8 @@ class Run:
         first = not ws["initialized"]
         found = self.collect_clan(w, ws, first) if w["kind"] == "clan" else self.collect_player(w)
         if found is None:
+            self.summary.append({"watch": w["label"], "read": 0, "matching": 0, "posted": 0,
+                                 "note": "lookup failed - check the tag"})
             return
         if w["kind"] == "player":
             w["_stats"] = "1 battle log"
@@ -436,12 +505,23 @@ class Run:
         if first:                                   # baseline: remember everything that already exists
             for key, _ in found:
                 posted.add(key)
-        if self.backfill > 0:                       # backfill N: the N newest matching battles, for EVERY watch,
-            candidates = matching[-self.backfill:]  # even ones posted before (use it to test; leave it 0 normally)
-            if not candidates:
-                log(f"[{w['label']}] nothing to backfill: read {len(found)} battles "
-                    f"({sum(1 for _, b in found if crimg.is_war(b))} war), none match this watch's filters "
-                    f"(modes {w['modes']}, results {w['results']})")
+        note = ""
+        if self.backfill > 0:                       # backfill N: N different layouts, for EVERY watch, even ones
+            candidates = pick_variety(matching, self.backfill)  # posted before (testing; leave it 0 normally)
+            if candidates:
+                log(f"[{w['label']}] backfill {self.backfill}: posting "
+                    + ", ".join(KIND_LABEL[layout_kind(b)] for _, b in candidates))
+            else:
+                d = w.get("_diag") or {}
+                note = (f"read {len(found)} battles ({sum(1 for _, b in found if crimg.is_war(b))} war) from "
+                        f"{d.get('fetched', '?')} of {d.get('members', '?')} members; none match modes {w['modes']} / "
+                        f"results {w['results']}.")
+                if d.get("war_by_clan"):
+                    note += (f" War battles in their logs were played for clans {d['war_by_clan']} - this watch is "
+                             f"{w['tag']}, so battles from other clans are ignored.")
+                elif w["kind"] == "clan":
+                    note += " No war battles at all in their recent logs (is the clan taking part in the river race?)."
+                log(f"[{w['label']}] NOTHING TO POST: {note}")
         else:
             candidates = [] if first else [x for x in matching if x[0] not in posted]
         if first and self.backfill == 0:
@@ -476,7 +556,7 @@ class Run:
                 (d / re.sub(r"[^A-Za-z0-9_.-]", "_", f"{w['label']}_{fname}")).write_bytes(png)
                 log(f"[{w['label']}] dry-run image written: {fname}"); continue
             try:
-                post_webhook(hook, png, fname, self.embed(b), w.get("bot_name") or self.cfg.get("bot_name") or DEFAULT_BOT)
+                post_webhook(hook, png, fname, self.embeds(b), w.get("bot_name") or self.cfg.get("bot_name") or DEFAULT_BOT)
             except Exception as e:
                 log(f"[{w['label']}] Discord post failed for {key}: {e!r} - will retry next pass")
                 self.problems += 1; continue
@@ -489,6 +569,20 @@ class Run:
         ws["initialized"] = True
         log(f"[{w['label']}] pass done: {w.pop('_stats', '')}, new matching battles {len(candidates)}, posted {sent}"
             + (f", held back {held} (day unknown yet)" if held else ""))
+        self.summary.append({"watch": w["label"], "read": len(found), "matching": len(matching), "posted": sent,
+                             "note": note or (f"held back {held}" if held else "")})
+
+
+def write_summary(run):
+    """Shows a per-watch table on the GitHub Actions run page (no need to open the log)."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path or not run.summary:
+        return
+    rows = ["### ja's watcher", "", "| watch | battles read | matching | posted | note |", "|---|---|---|---|---|"]
+    for r in run.summary:
+        rows.append(f"| {r['watch']} | {r['read']} | {r['matching']} | {r['posted']} | {str(r['note']).replace('|', '/')} |")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n".join(rows) + "\n")
 
 
 def main():
@@ -499,7 +593,7 @@ def main():
     ap.add_argument("--loop", type=int, default=0, help="seconds between passes (0 = single pass)")
     ap.add_argument("--dry-run", action="store_true", help="write images to ./dry_run, post nothing, save no state")
     ap.add_argument("--backfill", type=int, default=0,
-                    help="post the N newest matching battles to EVERY watch now, even if posted before (testing)")
+                    help="post N different layouts to EVERY watch now (boat, 1v1, duel 2-0, duel 2-1...), even if posted before")
     a = ap.parse_args()
     if not a.key:
         sys.exit("Set CR_API_KEY")
@@ -516,6 +610,10 @@ def main():
     crimg.apply_layout()
     if cfg.get("credit") is not None:
         crimg.CREDIT = cfg["credit"]
+    if cfg.get("credit_color"):
+        crimg.CREDIT_COLOR = crimg.parse_color(cfg["credit_color"])
+    if cfg.get("credit_name_color"):
+        crimg.CREDIT_NAME_COLOR = crimg.parse_color(cfg["credit_name_color"])
     if (HERE / "assets").is_dir():
         crimg.ASSETS_DIR = str(HERE / "assets")
     run = Run(cfg, Api(a.key, base), a.dry_run, a.backfill, a.state)
@@ -534,9 +632,11 @@ def main():
                 log(f"[{w['label']}] unexpected error: {e!r}"); run.problems += 1
         if not a.dry_run:
             save_state(a.state, run.state)
+        write_summary(run)
         if not a.loop:
             break
         run.problems = 0
+        run.summary = []
         time.sleep(a.loop)
     if run.problems:
         sys.exit(1)                      # makes the GitHub Actions run show red when something went wrong
