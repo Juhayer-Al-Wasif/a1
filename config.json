@@ -5,8 +5,6 @@
   "watch": [
     { "clan": "#9U82JJ0Y", "webhook": "DISCORD_WEBHOOK_CLAN1" },
 
-    { "clan": "#V2GQU", "webhook": "DISCORD_WEBHOOK_CLAN2", "days": "battle" },
-
-    { "player": "#PLAYERTAG", "webhook": "DISCORD_WEBHOOK_JA", "modes": ["ladder", "ranked"], "results": "win" }
+    { "clan": "#V2GQU", "webhook": "DISCORD_WEBHOOK_CLAN2", "days": "battle" }
   ]
 }
