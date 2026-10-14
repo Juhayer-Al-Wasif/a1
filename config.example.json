@@ -1,13 +1,27 @@
 {
   "bot_name": "ja's watcher",
   "timezone": "UTC",
-  "embed_time": "utc",
-
+  "embed_time": "discord",
+  "duel_images": "split",
+  "font": "lilita one",
   "watch": [
-    { "clan": "#CLANTAG1", "webhook": "DISCORD_WEBHOOK_CLAN1" },
-
-    { "clan": "#CLANTAG2", "webhook": "DISCORD_WEBHOOK_CLAN2", "days": "battle" },
-
-    { "player": "#PLAYERTAG", "webhook": "DISCORD_WEBHOOK_JA", "modes": ["ladder", "ranked"], "results": "win" }
+    {
+      "clan": "#CLANTAG1",
+      "webhook": "DISCORD_WEBHOOK_CLAN1"
+    },
+    {
+      "clan": "#CLANTAG2",
+      "webhook": "DISCORD_WEBHOOK_CLAN2",
+      "days": "battle"
+    },
+    {
+      "player": "#PLAYERTAG",
+      "webhook": "DISCORD_WEBHOOK_JA",
+      "modes": [
+        "ladder",
+        "ranked"
+      ],
+      "results": "win"
+    }
   ]
 }
