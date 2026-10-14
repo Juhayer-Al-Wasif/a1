@@ -106,6 +106,23 @@ BOAT_HEAD, BOAT_PANEL_H = 215, 632
 
 # ------------------------------------------------------------------- fonts --
 LILITA = "https://github.com/google/fonts/raw/main/ofl/lilitaone/LilitaOne-Regular.ttf"
+FONT_BASE = "https://github.com/google/fonts/raw/main/ofl/"
+# Free fonts from the Google Fonts repo, by name (config "font" / --font). Run --font-sheet to SEE them all.
+FONT_PRESETS = {
+    "lilita one": "lilitaone/LilitaOne-Regular.ttf",      # the current look
+    "luckiest guy": "luckiestguy/LuckiestGuy-Regular.ttf",
+    "titan one": "titanone/TitanOne-Regular.ttf",
+    "paytone one": "paytoneone/PaytoneOne-Regular.ttf",
+    "rowdies": "rowdies/Rowdies-Bold.ttf",
+    "passion one": "passionone/PassionOne-Bold.ttf",
+    "bangers": "bangers/Bangers-Regular.ttf",
+    "chango": "chango/Chango-Regular.ttf",
+    "bowlby one": "bowlbyone/BowlbyOne-Regular.ttf",
+    "russo one": "russoone/RussoOne-Regular.ttf",
+    "fugaz one": "fugazone/FugazOne-Regular.ttf",
+    "black han sans": "blackhansans/BlackHanSans-Regular.ttf",
+    "poppins": "poppins/Poppins-Bold.ttf",
+}
 FALLBACK_FONTS = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc", "/System/Library/Fonts/PingFang.ttc",
@@ -125,10 +142,37 @@ def warn(msg):
         print("[warn]", msg, file=sys.stderr)
 
 
+def preset_font_path(name, quiet=False):
+    """Local path of a FONT_PRESETS font, downloading it into ./fonts the first time."""
+    rel = FONT_PRESETS.get(str(name).strip().lower())
+    if not rel:
+        return None
+    fn = FONT_DIR / Path(rel).name
+    if fn.exists():
+        return str(fn)
+    if OFFLINE:
+        return None
+    try:
+        FONT_DIR.mkdir(exist_ok=True)
+        r = requests.get(FONT_BASE + rel, timeout=30); r.raise_for_status()
+        fn.write_bytes(r.content)
+        return str(fn)
+    except Exception as e:
+        if not quiet:
+            warn(f"couldn't download font '{name}' ({e}) - download the .ttf yourself and use its file path")
+        return None
+
+
 def setup_fonts(custom=None):
     global _main_path
-    if custom and os.path.exists(custom):
-        _main_path = custom; return
+    if custom:
+        if os.path.exists(custom):
+            _main_path = custom; return
+        pth = preset_font_path(custom)
+        if pth:
+            _main_path = pth; return
+        if str(custom).strip().lower() not in FONT_PRESETS:
+            warn(f"font '{custom}' is neither a file nor a known name ({', '.join(sorted(FONT_PRESETS))}); using the default")
     for p in [FONT_DIR / "LilitaOne-Regular.ttf", Path("Supercell-Magic.ttf")]:
         if p.exists():
             _main_path = str(p); return
@@ -1210,7 +1254,8 @@ def period_label(battle):
 
 
 def header_sub(battle):
-    parts = [x for x in ((period_label(battle) or "").upper(), ranked_sub(battle) or special_sub(battle)) if x]
+    parts = [x for x in (battle.get("_sub"), (period_label(battle) or "").upper(),
+                         ranked_sub(battle) or special_sub(battle)) if x]
     return "  ·  ".join(parts) or None
 
 
@@ -1385,24 +1430,60 @@ def result_style(win, lose):
 
 
 # ------------------------------------------------------------------ render --
-def render_battle(battle, out_path, tz="America/New_York", debug=False):
+DUEL_SPLIT = False     # True: a duel becomes one normal-sized image PER ROUND (bot default); see render_duel_split
+
+
+def render_battle_files(battle, out_path, tz="America/New_York", debug=False, split=None):
+    """Renders a battle; returns the list of image files written ([] = skipped). Only split duels give several."""
+    out_path = Path(out_path)
     team, opp = battle.get("team", []), battle.get("opponent", [])
     if not team or not opp or not (team[0].get("cards") or team[0].get("rounds")):
-        print(f"  skipped ({battle.get('type')}): no deck data in this battle"); return False
+        print(f"  skipped ({battle.get('type')}): no deck data in this battle"); return []
     battle["_outcome"] = battle_outcome(battle)     # decide first: prep_display() may hide trophyChange
     prep_display(battle)
     if str(battle.get("type", "")).lower() == "boatbattle":
         render_boat(battle, out_path, tz, debug)
-        return True
+        return [out_path]
     n = max(len(team), len(opp), 1)
     rt = get_rounds(team[0]) if len(team) == 1 else []
     ro = get_rounds(opp[0]) if len(opp) == 1 else []
     rc = min(len(rt), len(ro))
     if rc >= 1 and (str(battle.get("type", "")).lower().startswith("riverraceduel") or rc > 1):
+        if DUEL_SPLIT if split is None else split:
+            return render_duel_split(battle, team[0], opp[0], rt[:rc], ro[:rc], out_path, tz, debug)
         render_duel(battle, team[0], opp[0], rt[:rc], ro[:rc], out_path, tz, debug)
-    else:
-        render_single(battle, team, opp, n, out_path, tz, debug)
-    return True
+        return [out_path]
+    render_single(battle, team, opp, n, out_path, tz, debug)
+    return [out_path]
+
+
+def render_battle(battle, out_path, tz="America/New_York", debug=False):
+    """One image per battle (a duel is drawn as one tall combined image). True if something was rendered."""
+    return bool(render_battle_files(battle, out_path, tz, debug, split=False))
+
+
+def render_duel_split(battle, tp, op, rt, ro, out_path, tz, debug):
+    """One image per round, each exactly the size/layout of a normal 1v1 image. Discord caps how tall an embedded
+    image can be shown, so one tall combined duel image is displayed much smaller than a 1v1; separate round images
+    are all shown at the same size."""
+    out_path = Path(out_path)
+    views = [(round_view(tp, x), round_view(op, y)) for x, y in zip(rt, ro)]
+    for a, c in views:
+        fix_king_hp([a], [c]); fix_king_hp([c], [a])
+    winners = [round_winner(a, c) for a, c in views]
+    tw, ow = winners.count(1), winners.count(-1)
+    verdict = "WON" if tw > ow else "LOST" if tw < ow else "DRAW"
+    paths = []
+    for i, (a, c) in enumerate(views, 1):
+        rb = dict(battle)
+        rb["team"], rb["opponent"] = [a], [c]
+        rb["_outcome"] = winners[i - 1]
+        rb["_sub"] = f"DUEL ROUND {i} OF {len(views)}  ·  DUEL {verdict} {tw}-{ow}"
+        rb["_recap_title"] = f"ROUND {i}"
+        pth = out_path.with_name(f"{out_path.stem}_r{i}{out_path.suffix}")
+        render_single(rb, [a], [c], 1, pth, tz, debug)
+        paths.append(pth)
+    return paths
 
 
 def render_single(battle, team, opp, n, out_path, tz, debug):
@@ -1431,7 +1512,7 @@ def render_single(battle, team, opp, n, out_path, tz, debug):
                 draw_deck(canvas, p, p.get("cards", []), x, top, co, ph)
                 if debug:
                     debug_print(p, p.get("cards", []))
-    draw_recap(canvas, team, opp, head, body)
+    draw_recap(canvas, team, opp, head, body, title=battle.get("_recap_title") or "GAME RECAP")
     draw_footer(canvas, battle, H, tz, n)
     canvas.convert("RGB").save(out_path, quality=95)
 
@@ -1759,9 +1840,47 @@ def demo_emblems(path):
     canvas.convert("RGB").save(path)
 
 
+def font_sheet(out_path):
+    """One picture showing the same sample text in every preset font (and any extra .ttf in ./fonts)."""
+    rows = [(n, preset_font_path(n, quiet=True)) for n in FONT_PRESETS]
+    known = {Path(v).name for v in FONT_PRESETS.values()}
+    if FONT_DIR.exists():
+        rows += [(q.stem, str(q)) for q in sorted(FONT_DIR.glob("*.ttf")) if q.name not in known
+                 and not q.name.lower().startswith("notosans")]
+    RH = 128
+    canvas = background(W, RH * len(rows) + 20)
+    d = ImageDraw.Draw(canvas)
+    sample = "WIN  LOSE  Fatelyed  14,000  3.8  1v1  AVG ELIXIR  Battle Day 2"
+    for i, (name, path) in enumerate(rows):
+        y = 10 + i * RH
+        text(d, (30, y + 16), f"{i + 1}.  {name}", 24, fill=(255, 220, 120), anchor="lm", stroke=2)
+        if path is None:
+            text(d, (30, y + 70), "(couldn't download this one - skipped)", 26, anchor="lm", stroke=2)
+            continue
+        try:
+            size = 54
+            f = ImageFont.truetype(path, size)
+            while size > 24 and d.textlength(sample, font=f) > W - 70:      # wide fonts: shrink to fit
+                size -= 2
+                f = ImageFont.truetype(path, size)
+        except Exception:
+            text(d, (30, y + 70), "(couldn't open this font file)", 26, anchor="lm", stroke=2)
+            continue
+        d.text((30, y + 74), sample, font=f, fill=(255, 255, 255), anchor="lm", stroke_width=5, stroke_fill=DARK)
+    canvas.convert("RGB").save(out_path)
+    return out_path
+
+
+def render_report(b, path, tz, debug):
+    files = render_battle_files(b, path, tz, debug)
+    for f in files:
+        print("Saved", f)
+    return bool(files)
+
+
 # -------------------------------------------------------------------- main --
 def main():
-    global OFFLINE, CREDIT, CREDIT_COLOR, CREDIT_NAME_COLOR, SHOW_CROWNS, ASSETS_DIR, SHOW_EMBLEM, SHOW_TOWER_TROOP, RARITY_FRAMES, WAR_LEAGUES, SHOW_TIER, CARD_STRETCH, BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR, ESTIMATE_LEAGUE
+    global OFFLINE, DUEL_SPLIT, CREDIT, CREDIT_COLOR, CREDIT_NAME_COLOR, SHOW_CROWNS, ASSETS_DIR, SHOW_EMBLEM, SHOW_TOWER_TROOP, RARITY_FRAMES, WAR_LEAGUES, SHOW_TIER, CARD_STRETCH, BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR, ESTIMATE_LEAGUE
     ap = argparse.ArgumentParser(description="Clash Royale battle log image generator")
     ap.add_argument("--tag", default=DEFAULT_TAG)
     ap.add_argument("--key", default=os.environ.get("CR_API_KEY"))
@@ -1781,6 +1900,10 @@ def main():
     ap.add_argument("--no-tower-troop", action="store_true", help="hide the tower troop card")
     ap.add_argument("--credit", default=None, help='footer credit text (default: "made with 🫶🏻 by ja")')
     ap.add_argument("--no-credit", action="store_true", help="hide the footer credit")
+    ap.add_argument("--duel-split", action="store_true",
+                    help="draw each duel round as its own normal-sized image (the bot does this by default)")
+    ap.add_argument("--font-sheet", action="store_true",
+                    help="download the preset fonts and write font_sheet.png comparing them, then exit")
     ap.add_argument("--credit-color", default=None, metavar="HEX",
                     help='colour of the whole credit line, e.g. "#FFD700" (default #E1E6F5)')
     ap.add_argument("--credit-name-color", default=None, metavar="HEX",
@@ -1819,6 +1942,7 @@ def main():
             CREDIT_NAME_COLOR = parse_color(a.credit_name_color)
     except ValueError as e:
         sys.exit(str(e))
+    DUEL_SPLIT = a.duel_split
     if a.no_credit:
         CREDIT = ""
     elif a.credit is not None:
@@ -1842,6 +1966,9 @@ def main():
         PLAYS.update(json.loads(Path(a.plays).read_text(encoding="utf-8")))
     Path(a.out).mkdir(exist_ok=True)
 
+    if a.font_sheet:
+        print("Saved", font_sheet(Path(a.out) / "font_sheet.png"), "- open it, pick a name, then use --font \"name\"")
+        return
     if a.demo_emblems:
         OFFLINE = True
         demo_emblems(Path(a.out) / "demo_emblems.png"); print("Saved demo_emblems.png"); return
@@ -1853,8 +1980,7 @@ def main():
             b, name = demo_battle(False), "demo_war.png"
             b.update({"type": "riverRacePvP", "gameMode": {"name": "TripleElixir_Ladder"}, "arena": {"name": "Valkalla"}})
             b.pop("leagueNumber", None)
-        render_battle(b, Path(a.out) / name, a.tz, a.debug)
-        print("Saved", Path(a.out) / name); return
+        render_report(b, Path(a.out) / name, a.tz, a.debug); return
     if a.demo or a.demo_duel:
         OFFLINE = True
         if a.demo:
@@ -1862,8 +1988,7 @@ def main():
                                     "Hog Rider": 5, "Fireball": 0, "Log": 4, "Ice Golem": 0}})
         CLAN_LEAGUES["#A"] = ("Legendary", "II")   # demo: one known league, one estimated
         path = Path(a.out) / ("demo_duel.png" if a.demo_duel else "demo.png")
-        render_battle(demo_battle(a.demo_duel), path, a.tz, a.debug)
-        print("Saved", path); return
+        render_report(demo_battle(a.demo_duel), path, a.tz, a.debug); return
 
     if not a.key:
         sys.exit("Set CR_API_KEY or pass --key")
@@ -1891,8 +2016,7 @@ def main():
             b["_clans"] = {t: CLAN_CACHE.get(t) for p in (b.get("team", []) + b.get("opponent", []))
                           for t in [(p.get("clan") or {}).get("tag")] if t}
             path.with_suffix(".json").write_text(json.dumps(b, indent=2, ensure_ascii=False), encoding="utf-8")
-        if render_battle(b, path, a.tz, a.debug):
-            print("Saved", path)
+        render_report(b, path, a.tz, a.debug)
 
 
 if __name__ == "__main__":
