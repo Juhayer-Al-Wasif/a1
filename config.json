@@ -2,7 +2,7 @@
   "bot_name": "ja's watcher",
  "timezone": "UTC",
  "embed_time": "discord",
-  "duel_images": "split",
+  "duel_images": "combined",
   "font": "fugaz one",
   "watch": [
     { "clan": "#9U82JJ0Y", "webhook": "DISCORD_WEBHOOK_CLAN1" },
