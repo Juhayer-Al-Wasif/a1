@@ -135,6 +135,11 @@ def load_config(path):
             errors.append(f'{where}: "days" must be all, battle or training')
         watches.append({"kind": kind, "tag": tag, "webhook": str(w["webhook"]), "modes": modes, "results": results,
                         "days": days, "label": w.get("name") or tag, "bot_name": w.get("bot_name")})
+    if str(cfg.get("duel_images", "split")).lower() not in ("split", "combined"):
+        errors.append('"duel_images" must be split (one image per round) or combined (one tall image)')
+    if str(cfg.get("embed_time", "discord")).lower() == "utc":
+        log('NOTE: "embed_time": "utc" prints a FIXED UTC time that is the same for everyone. For a time every '
+            'viewer sees in their own time zone, set "embed_time": "discord" (or delete the line).')
     if str(cfg.get("embed_time", "discord")).lower() not in ("discord", "utc", "none"):
         errors.append('"embed_time" must be discord, utc or none')
     if str(cfg.get("embed_time_style", "F")) not in list("tTdDfFR"):
@@ -342,13 +347,16 @@ def side_text(players, dot):
     return "\n".join(lines) or f"{dot} ?"
 
 
-def post_webhook(url, png, filename, embeds, username):
-    embeds = [dict(embeds[0], image={"url": f"attachment://{filename}"})] + list(embeds[1:])   # image in the first box
+def post_webhook(url, files, embeds, username):
+    """files = [(filename, png_bytes), ...]; the first len(files) embeds each show one of them."""
+    embeds = [dict(e, image={"url": f"attachment://{files[i][0]}"}) if i < len(files) else e
+              for i, e in enumerate(embeds)]
     payload = {"username": username[:80], "embeds": embeds, "allowed_mentions": {"parse": []}}
     for attempt in range(3):
         r = requests.post(url + ("&" if "?" in url else "?") + "wait=true",
                           data={"payload_json": json.dumps(payload)},
-                          files={"files[0]": (filename, png, "image/png")}, timeout=60)
+                          files={f"files[{i}]": (n, data, "image/png") for i, (n, data) in enumerate(files)},
+                          timeout=90)
         if r.status_code == 429:
             time.sleep(float(r.json().get("retry_after", 2)) + 0.5); continue
         r.raise_for_status()
@@ -394,15 +402,15 @@ class Run:
         return self.state["clocks"].get(tag)
 
     def render(self, battle, period):
+        """-> [(filename, png bytes)]: one image, or one per round for a split duel; [] if it can't be drawn."""
         crimg.enrich_cards(battle, self.cards_meta())
         if period:
             battle["_period"] = period
-        out = self.tmp / "battle.png"
-        if not crimg.render_battle(battle, out, self.cfg.get("timezone", "UTC")):
-            return None
-        return out.read_bytes()
+        files = crimg.render_battle_files(battle, self.tmp / "battle.png", self.cfg.get("timezone", "UTC"))
+        return [(f"battle_{battle['battleTime']}" + (f"_r{i}" if len(files) > 1 else "") + ".png",
+                 Path(f).read_bytes()) for i, f in enumerate(files, 1)]
 
-    def embeds(self, b):
+    def embeds(self, b, n_images=1):
         """Box 1: names (RoyaleAPI links) + the image. Box 2 (under the image): the battle time as a Discord timestamp,
         which each viewer sees in their own language/time zone, e.g. <t:1791882480:F> = "Tuesday, October 13, 2026 at
         3:08 PM". (Discord can't render timestamps inside an embed footer, hence the thin second box.)
@@ -423,7 +431,7 @@ class Run:
             line = f"{when:%A}, {when:%B} {when.day}, {when.year} at {int(when.strftime('%I'))}:{when:%M} {when:%p} UTC"
         else:
             line = None
-        out = [main]
+        out = [main] + [{"color": color} for _ in range(max(n_images, 1) - 1)]   # extra images: one box each
         if line:
             if str(self.cfg.get("embed_time_position", "below")).lower() == "inside":
                 main["description"] += "\n" + line
@@ -545,18 +553,19 @@ class Run:
                     if (w["days"] == "battle") != is_battle:
                         posted.add(key); continue   # the wrong kind of day: never post it
             try:
-                png = self.render(b, period)
+                files = self.render(b, period)
             except Exception as e:
                 log(f"[{w['label']}] render failed for {key}: {e!r}"); posted.add(key); self.problems += 1; continue
-            if png is None:
+            if not files:
                 posted.add(key); continue
-            fname = f"battle_{b['battleTime']}.png"
             if self.dry:
                 d = HERE / "dry_run"; d.mkdir(exist_ok=True)
-                (d / re.sub(r"[^A-Za-z0-9_.-]", "_", f"{w['label']}_{fname}")).write_bytes(png)
-                log(f"[{w['label']}] dry-run image written: {fname}"); continue
+                for fname, data in files:
+                    (d / re.sub(r"[^A-Za-z0-9_.-]", "_", f"{w['label']}_{fname}")).write_bytes(data)
+                log(f"[{w['label']}] dry-run: wrote {len(files)} image(s) for {b['battleTime']}"); continue
             try:
-                post_webhook(hook, png, fname, self.embeds(b), w.get("bot_name") or self.cfg.get("bot_name") or DEFAULT_BOT)
+                post_webhook(hook, files, self.embeds(b, len(files)),
+                             w.get("bot_name") or self.cfg.get("bot_name") or DEFAULT_BOT)
             except Exception as e:
                 log(f"[{w['label']}] Discord post failed for {key}: {e!r} - will retry next pass")
                 self.problems += 1; continue
@@ -606,7 +615,8 @@ def main():
 
     base = os.environ.get("CR_API_BASE") or cfg.get("api_base") or DEFAULT_BASE
     crimg.API_BASE = base
-    crimg.setup_fonts()
+    crimg.setup_fonts(cfg.get("font"))
+    crimg.DUEL_SPLIT = str(cfg.get("duel_images", "split")).lower() == "split"
     crimg.apply_layout()
     if cfg.get("credit") is not None:
         crimg.CREDIT = cfg["credit"]
