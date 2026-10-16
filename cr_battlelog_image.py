@@ -45,6 +45,7 @@ SHOW_TOWER_TROOP = True
 CREDIT = "made with 🫶🏻 by ja"   # small line at the very bottom ("" to hide)
 CREDIT_COLOR = (225, 230, 245)   # colour of the whole credit line
 CREDIT_NAME_COLOR = None         # colour of just the last word ("ja"); None = same as CREDIT_COLOR
+SHOW_WAR_TROPHIES = "war"    # clan war trophies under the clan name: "war" (war battles only) / "always" / "never"
 SHOW_CROWNS = False       # crown score in the header duplicates 'TOWERS TAKEN'; --show-crowns brings it back
 ASSETS_DIR = None        # folder with official art (Fan Kit / cloned asset repos); see find/asset_img()
 CARD_STRETCH = 1.0       # >1 makes cards taller, <1 flatter
@@ -63,7 +64,7 @@ PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 672, 242, 232, 56   # set by apply_layout(
 DECK_H = 470
 BLOCK_GAP = 24
 FOOT_H = 84
-TR_ROW = 42           # height of the trophy row (removed when nobody has trophies to show)
+ROW_H = 40            # height of one identity row (player trophies / clan war trophies); a row nobody has is dropped
 PL_X, PR_X, PW = 40, 980, 580
 CEN_X, CEN_W = 640, 320
 CARD_W, CARD_H = 118, 142
@@ -102,7 +103,54 @@ def apply_layout():
         PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 672, 242, 232, 56
 
 
-BOAT_HEAD, BOAT_PANEL_H = 215, 632
+BOAT_HEAD, BOAT_PANEL_H, BOAT_CARDS_OFF = 215, 700, 262
+
+# ---------------------------------------------------------------- missing files ---
+# Everything the renderer wanted but couldn't find. The bot posts this list to the warnings webhook with the EXACT
+# file name to add. key -> {"file": exact name, "what": why/what it is}
+MISSING = {}
+
+
+def note_missing(key, file, what):
+    MISSING.setdefault(key, {"file": file, "what": what})
+
+
+# Icon files looked up in the assets folder (any sub-folder, .png/.webp, case and - _ space ignored).
+# name -> (what it is, aliases that also work)
+ASSET_SPEC = {
+    "crown_blue": ("blue crown: duel round won by the blue side (also the header crown with show_crowns)", ()),
+    "crown_red": ("red crown: duel round won by the red side (also the header crown with show_crowns)", ()),
+    "elixir": ("elixir drop next to AVG ELIXIR", ("elixir_drop", "drop")),
+    "cycle": ("4-card cycle icon", ("four_card_cycle", "recycle")),
+    "cards_played": ("check icon next to CARDS PLAYED (duel rounds)", ("check", "cardsplayed")),
+    "trophy": ("gold trophy next to a player's trophies", ()),
+    "trophy_war": ("PURPLE clan war trophy next to a clan's war trophies", ("war_trophy", "clan_war_trophy")),
+    "level_blue": ("blue number plate for card levels 1-15 (the level number is drawn on top)", ("level",)),
+    "level_max": ("number plate for max-level (16) cards (the number is drawn on top)", ("level_16", "maxed")),
+    "boat_battle": ("boat battle icon in the boat battle header", ("boat",)),
+    "tower_start": ("hexagon badge behind the 'towers at start' number (boat battles)", ()),
+    "tower_destroyed": ("hexagon badge behind the 'towers destroyed' number (boat battles)", ()),
+    "tower_left": ("hexagon badge behind the 'towers left' number (boat battles)", ()),
+}
+
+
+def asset_slug(name):
+    """'Electro Wizard' -> 'electro_wizard', 'Mini P.E.K.K.A' -> 'mini_pekka' (used in card file names)."""
+    t = re.sub(r"[.'`]", "", (name or "").lower())
+    return re.sub(r"[^a-z0-9]+", "_", t).strip("_")
+
+
+def asset_by_name(name):
+    """The image for a canonical icon name (see ASSET_SPEC) or None; remembers it as missing if it isn't there."""
+    want = {re.sub(r"[^a-z0-9]", "", n.lower()) for n in (name,) + tuple(ASSET_SPEC[name][1])}
+    for stem, path in _assets():
+        if stem in want:
+            img = _load_asset(path)
+            if img is not None:
+                return img
+    note_missing(f"icon:{name}", f"{name}.png", ASSET_SPEC[name][0] + " - a built-in drawing is used until you add it")
+    return None
+
 
 # ------------------------------------------------------------------- fonts --
 LILITA = "https://github.com/google/fonts/raw/main/ofl/lilitaone/LilitaOne-Regular.ttf"
@@ -173,16 +221,21 @@ def setup_fonts(custom=None):
             _main_path = pth; return
         if str(custom).strip().lower() not in FONT_PRESETS:
             warn(f"font '{custom}' is neither a file nor a known name ({', '.join(sorted(FONT_PRESETS))}); using the default")
-    for p in [FONT_DIR / "LilitaOne-Regular.ttf", Path("Supercell-Magic.ttf")]:
+    # default: Fugaz One. A copy in the repo's fonts/ folder is used first (fastest); otherwise it is downloaded once
+    # (GitHub Actions keeps ./fonts in its cache). Lilita One is the fallback if that fails.
+    for p in [FONT_DIR / "FugazOne-Regular.ttf", Path("Supercell-Magic.ttf")]:
         if p.exists():
             _main_path = str(p); return
-    try:
-        FONT_DIR.mkdir(exist_ok=True)
-        r = requests.get(LILITA, timeout=20); r.raise_for_status()
-        (FONT_DIR / "LilitaOne-Regular.ttf").write_bytes(r.content)
-        _main_path = str(FONT_DIR / "LilitaOne-Regular.ttf"); return
-    except Exception:
-        warn("couldn't download Lilita One; using a system font (pass --font for a better one)")
+    pth = preset_font_path("fugaz one", quiet=True)
+    if pth:
+        _main_path = pth; return
+    note_missing("font:fugaz", "fonts/FugazOne-Regular.ttf",
+                 "the default font (Fugaz One) could not be downloaded. Download it from fonts.google.com/specimen/Fugaz+One "
+                 "and upload the .ttf here")
+    pth = preset_font_path("lilita one", quiet=True)
+    if pth:
+        _main_path = pth; return
+    warn("couldn't download any preset font; using a system font")
 
 
 FONT_PRIORITY = ["pingfang", "hiragino", "stheiti", "songti", "arialunicode", "notosanscjk", "notosanssc",
@@ -400,7 +453,7 @@ def paste_rgba(canvas, im, x, y):
 def layout(s, size):
     """Items are ('c', char, x, font) or ('e', emoji_image, x). Per-character font fallback; characters no font
     has are dropped (never drawn as boxes)."""
-    items, state = [], {"x": 0.0, "prev": None, "pf": None}
+    items, state = [], {"x": 0.0, "prev": None, "pf": None, "ink": 0.0}
 
     def add_char(ch):
         fonts = chain(size)
@@ -412,6 +465,10 @@ def layout(s, size):
         if state["prev"] is not None and state["pf"] is f:
             state["x"] += f.getlength(state["prev"] + ch) - f.getlength(state["prev"]) - f.getlength(ch)
         items.append(("c", ch, state["x"], f))
+        try:                                         # slanted fonts: the ink can stick out past the advance width
+            state["ink"] = state["x"] + f.getbbox(ch, anchor="ls")[2]
+        except Exception:
+            state["ink"] = state["x"] + f.getlength(ch)
         state["x"] += f.getlength(ch)
         state["prev"], state["pf"] = ch, f
 
@@ -421,8 +478,10 @@ def layout(s, size):
             add_char(ch)
         em = emoji_scaled(m.group(), size)
         if em is not None:
-            items.append(("e", em, state["x"]))
-            state["x"] += em.width + size * 0.06
+            ex = max(state["x"], state["ink"]) + size * (0.14 if items else 0)     # clear the previous letter's ink
+            items.append(("e", em, ex))
+            state["x"] = ex + em.width + size * 0.12
+            state["ink"] = state["x"]
             state["prev"] = state["pf"] = None
         else:
             for ch in m.group():
@@ -521,6 +580,10 @@ def enrich_cards(battle, meta):
                     fix(c)
 
 
+def wants_war_trophies(battle):
+    return SHOW_WAR_TROPHIES == "always" or (SHOW_WAR_TROPHIES == "war" and is_war(battle))
+
+
 def enrich_clans(battle, key):
     """Attach clan war trophies + badge info (needed for the league-coloured emblem)."""
     for side in ("team", "opponent"):
@@ -617,18 +680,36 @@ def asset_img(*keywords, exclude=()):
     return None
 
 
+def _card_stem_ok(stem, want, mode):
+    has_h, has_e = "hero" in stem, ("evo" in stem or "evolution" in stem)
+    if re.sub(r"hero|evolution|evo|card|medium|icon|\d+", "", stem) != want:
+        return False
+    return (mode == "hero" and has_h) or (mode == "evo" and has_e) or (mode == "normal" and not has_h and not has_e)
+
+
 def local_card_art(card, mode):
     want = norm(card.get("name"))
     for stem, path in _assets():
-        has_h, has_e = "hero" in stem, ("evo" in stem or "evolution" in stem)
-        base = re.sub(r"hero|evolution|evo|card|medium|icon|\d+", "", stem)
-        if base != want:
-            continue
-        if (mode == "hero" and has_h) or (mode == "evo" and has_e) or (mode == "normal" and not has_h and not has_e):
+        if _card_stem_ok(stem, want, mode):
             img = _load_asset(path)
             if img is not None:
                 return img
     return None
+
+
+def asset_exists(file):
+    """Is the file a warning asked for there now? (used to stop reminding once you added it)"""
+    f = str(file)
+    if f.startswith("fonts/"):
+        return Path(f).exists()
+    stem = re.sub(r"[^a-z0-9]", "", Path(f).stem.lower())
+    names = {stem}
+    for name, (_, aliases) in ASSET_SPEC.items():
+        if re.sub(r"[^a-z0-9]", "", name) == stem:
+            names |= {re.sub(r"[^a-z0-9]", "", a.lower()) for a in aliases}
+    mode = "hero" if stem.endswith("hero") else "evo" if stem.endswith("evo") else "normal"
+    want = re.sub(r"hero$|evo$", "", stem)
+    return any(s in names or (stem not in ASSET_SPEC and _card_stem_ok(s, want, mode)) for s, _ in _assets())
 
 
 def card_art(card, plain=False):
@@ -652,6 +733,9 @@ def card_art(card, plain=False):
             if key:
                 why = (f"the API lists a {key} image but it failed to download ({FETCH_ERRORS.get(url, 'unknown error')})"
                        if url else f"the API has no {key} for it")
+                note_missing(f"card:{asset_slug(card.get('name'))}:{mode}",
+                             f"{asset_slug(card.get('name'))}_{mode}.png",
+                             f"{card.get('name')} ({mode}) card image - {why}. The normal art + a {mode} marker is shown meanwhile")
                 warn(f"{mode.upper()} art for '{card.get('name')}' unavailable: {why}. Showing the normal art with a "
                      f"{mode} marker - it will switch to the real art once it exists. Or put '{card.get('name')} "
                      f"{mode.title()}.png' in --assets-dir.")
@@ -659,6 +743,8 @@ def card_art(card, plain=False):
     img = local_card_art(card, "normal")
     if img is not None:
         return img, mode, key is None
+    note_missing(f"card:{asset_slug(card.get('name'))}:normal", f"{asset_slug(card.get('name'))}.png",
+                 f"{card.get('name')} card image - the API gave no usable image (icons: {list(icons) or 'none'})")
     warn(f"no art for card '{card.get('name')}' (id {card.get('id')}, icons: {list(icons) or 'none'}) - "
          f"run with --dump and send me that JSON")
     return None, mode, False
@@ -735,21 +821,20 @@ def alpha_shadow(canvas, img, x, y, dy=6, radius=5, opacity=0.5):
 
 
 # ------------------------------------------------------------------- icons --
-def _asset_icon(canvas, keyword_sets, cx, cy, height):
-    for kw in keyword_sets:
-        img = asset_img(*kw)
-        if img is not None:
-            img = img.resize((max(1, int(img.width * height / img.height)), int(height)), Image.LANCZOS)
-            x, y = int(cx - img.width / 2), int(cy - img.height / 2)
-            alpha_shadow(canvas, img, x, y, dy=3, radius=3, opacity=0.4)
-            paste_rgba(canvas, img, x, y)
-            return True
-    return False
+def _asset_icon(canvas, name, cx, cy, height):
+    img = asset_by_name(name)
+    if img is None:
+        return False
+    img = img.resize((max(1, int(img.width * height / img.height)), int(height)), Image.LANCZOS)
+    x, y = int(cx - img.width / 2), int(cy - img.height / 2)
+    alpha_shadow(canvas, img, x, y, dy=3, radius=3, opacity=0.4)
+    paste_rgba(canvas, img, x, y)
+    return True
 
 
 def crown(canvas, cx, cy, color, s=1.0):
     blue = color[2] > color[0]
-    if _asset_icon(canvas, [("crown", "blue" if blue else "red"), ("crown",)], cx, cy, 72 * s):
+    if _asset_icon(canvas, "crown_blue" if blue else "crown_red", cx, cy, 72 * s):
         return
     band, band_hi = ((46, 128, 246), (140, 196, 255)) if blue else ((238, 60, 124), (255, 160, 196))
     gold, gold_hi, outline = (255, 192, 46), (255, 232, 128), (96, 52, 10)
@@ -774,7 +859,7 @@ def crown(canvas, cx, cy, color, s=1.0):
 
 
 def drop(canvas, cx, cy, s=1.0):
-    if _asset_icon(canvas, [("elixir",), ("drop",)], cx, cy, 46 * s):
+    if _asset_icon(canvas, "elixir", cx, cy, 46 * s):
         return
 
     def p(d, T, k):
@@ -791,7 +876,7 @@ def drop(canvas, cx, cy, s=1.0):
 
 
 def cycle_icon(canvas, cx, cy, s=1.0):
-    if _asset_icon(canvas, [("cycle",), ("recycle",)], cx, cy, 44 * s):
+    if _asset_icon(canvas, "cycle", cx, cy, 44 * s):
         return
 
     def p(d, T, k):
@@ -806,26 +891,37 @@ def cycle_icon(canvas, cx, cy, s=1.0):
     aa(canvas, (cx - 28 * s, cy - 28 * s, cx + 28 * s, cy + 28 * s), p)
 
 
-def trophy(canvas, cx, cy, s=1.0):
-    if _asset_icon(canvas, [("trophy",)], cx, cy, 42 * s):
-        return
-
+def _cup(canvas, cx, cy, s, fill, outline):
     def p(d, T, k):
-        o = (120, 70, 10)
         d.polygon(T([(cx - 13 * s, cy - 14 * s), (cx + 13 * s, cy - 14 * s), (cx + 9 * s, cy + 4 * s),
-                     (cx - 9 * s, cy + 4 * s)]), fill=GOLD, outline=o)
+                     (cx - 9 * s, cy + 4 * s)]), fill=fill, outline=outline)
         (a, b), (c, e) = T([(cx - 3 * s, cy + 4 * s), (cx + 3 * s, cy + 11 * s)])
-        d.rectangle([a, b, c, e], fill=GOLD)
+        d.rectangle([a, b, c, e], fill=fill)
         (a, b), (c, e) = T([(cx - 9 * s, cy + 10 * s), (cx + 9 * s, cy + 16 * s)])
-        d.rectangle([a, b, c, e], fill=GOLD, outline=o)
+        d.rectangle([a, b, c, e], fill=fill, outline=outline)
         for sx in (-1, 1):
             (a, b), = T([(cx + sx * 15 * s, cy - 6 * s)])
-            d.arc([a - 6 * k * s, b - 7 * k * s, a + 6 * k * s, b + 7 * k * s], 0, 360, fill=GOLD,
-                  width=int(3 * k))
+            d.arc([a - 6 * k * s, b - 7 * k * s, a + 6 * k * s, b + 7 * k * s], 0, 360, fill=fill, width=int(3 * k))
     aa(canvas, (cx - 26 * s, cy - 24 * s, cx + 26 * s, cy + 24 * s), p)
 
 
+def trophy(canvas, cx, cy, s=1.0):
+    if _asset_icon(canvas, "trophy", cx, cy, 42 * s):
+        return
+    _cup(canvas, cx, cy, s, GOLD, (120, 70, 10))
+
+
+def trophy_war(canvas, cx, cy, s=1.0):
+    """Purple trophy for CLAN WAR trophies."""
+    if _asset_icon(canvas, "trophy_war", cx, cy, 42 * s):
+        return
+    _cup(canvas, cx, cy, s, (176, 98, 255), (62, 20, 120))
+
+
 def check_icon(canvas, cx, cy, s=1.0):
+    if _asset_icon(canvas, "cards_played", cx, cy, 40 * s):
+        return
+
     def p(d, T, k):
         (a, b), = T([(cx, cy)])
         r = 15 * s * k
@@ -965,6 +1061,23 @@ def draw_gem(canvas, cx, y, color, inner):
     aa(canvas, (cx - 30, y - 24, cx + 30, y + 16), p)
 
 
+def level_plate(canvas, x, y, w, h, value, maxed=False, fs=26):
+    """Number plate: assets 'level_blue' (levels 1-15) / 'level_max' (16); built-in drawing if the file is missing:
+    blue plate, and a gold plate for maxed cards."""
+    img = asset_by_name("level_max" if maxed else "level_blue")
+    if img is not None:
+        canvas.alpha_composite(img.resize((int(w), int(h)), Image.LANCZOS), (int(x), int(y)))
+        stroke_col = (20, 34, 90) if not maxed else (70, 40, 5)
+    elif maxed:
+        rrect(canvas, (x, y, x + w, y + h), 8, fill=GOLD + (255,), outline=(60, 35, 5, 255), width=3)
+        stroke_col = (70, 40, 5)
+    else:
+        rrect(canvas, (x, y, x + w, y + h), 8, fill=(44, 124, 240, 255), outline=(10, 36, 104, 255), width=3)
+        rrect(canvas, (x + 3, y + 3, x + w - 3, y + h * 0.48), 5, fill=(96, 168, 255, 255))
+        stroke_col = (12, 32, 96)
+    text(ImageDraw.Draw(canvas), (x + w / 2, y + h / 2 + 1), str(value), fs, stroke=3, stroke_fill=stroke_col)
+
+
 def draw_card(canvas, card, x, y, plays=None, w=None, h=None, plain=False, small=False):
     w, h = w or CARD_W, h or CARD_H
     img, variant, exact = card_art(card, plain)
@@ -997,17 +1110,16 @@ def draw_card(canvas, card, x, y, plays=None, w=None, h=None, plain=False, small
             col, inner = (130, 130, 140), (96, 98, 108)
         draw_gem(canvas, ax + nw // 2, ay - 2, col, inner)
 
-    d = ImageDraw.Draw(canvas)
     bw, bh, fs = (28, 32, 20) if small else (34, 38, 26)
     bx, by = ax - 8, ay - 8
-    rrect(canvas, (bx, by, bx + bw, by + bh), 8, fill=GOLD + (255,), outline=(60, 35, 5, 255), width=3)
+    lvl = display_level(card)
     if plays is None:
-        text(d, (bx + bw / 2, by + bh / 2 + 1), str(display_level(card)), fs, stroke=3, stroke_fill=(70, 40, 5))
+        level_plate(canvas, bx, by, bw, bh, lvl, maxed=lvl >= 16, fs=fs)
     else:  # Stats Royale style: badge = times played, level chip bottom-right
-        text(d, (bx + bw / 2, by + bh / 2 + 1), str(plays), fs, stroke=3, stroke_fill=(70, 40, 5))
+        level_plate(canvas, bx, by, bw, bh, plays, maxed=False, fs=fs)
         lx, ly = ax + nw - 40, ay + nh - 24
         rrect(canvas, (lx, ly, lx + 44, ly + 28), 8, fill=(15, 18, 40, 220))
-        text(ImageDraw.Draw(canvas), (lx + 22, ly + 15), f"L{display_level(card)}", 18, stroke=2)
+        text(ImageDraw.Draw(canvas), (lx + 22, ly + 15), f"L{lvl}", 18, stroke=2)
 
 
 # ----------------------------------------------------------------- panels ---
@@ -1041,15 +1153,55 @@ def draw_tower_troop(canvas, player, x, top):
     ax, ay = x + 26, top + 22
     alpha_shadow(canvas, img, ax, ay, dy=4, radius=4, opacity=0.5)
     canvas.alpha_composite(img, (ax, ay))
-    rrect(canvas, (ax + w - 30, ay + img.height - 20, ax + w + 6, ay + img.height + 4), 7,
-          fill=GOLD + (255,), outline=(60, 35, 5, 255), width=2)
+    lv = display_level(st)
+    level_plate(canvas, ax + w - 30, ay + img.height - 20, 36, 24, lv, maxed=lv >= 16, fs=17)
     d = ImageDraw.Draw(canvas)
-    text(d, (ax + w - 12, ay + img.height - 8), str(display_level(st)), 17, stroke=2, stroke_fill=(70, 40, 5))
     nm = clean(st.get("name", ""))
     text(d, (ax + w / 2, ay + img.height + 20), nm, fit(nm, 110, 15, 11), fill=(225, 232, 250), stroke=2)
 
 
+def player_row_values(player):
+    return player.get("startingTrophies"), player.get("trophyChange"), player.get("globalRank")
+
+
+def has_player_row(player):
+    tr, ch, gr = player_row_values(player)
+    return tr is not None or bool(ch) or bool(gr)
+
+
+def has_war_row(player):
+    return (player.get("clan") or {}).get("clanWarTrophies") is not None
+
+
+def identity_rows_off(players):
+    """How much to pull the layout up when NO player on the page has a player-trophy row / a war-trophy row."""
+    return (0 if any(has_player_row(q) for q in players) else ROW_H) + (0 if any(has_war_row(q) for q in players) else ROW_H)
+
+
+def _icon_row(canvas, cx, y, icon, label, extra="", extra_col=(255, 255, 255), size=34, note=""):
+    w1 = text_width(label, size) if label else 0
+    w2 = text_width(extra, size - 6) if extra else 0
+    w3 = text_width(note, 22) if note else 0
+    gap = 12
+    show_icon = bool(label or extra)                 # a row with only a global rank has no trophy icon
+    total = (36 if show_icon else 0) + w1 + (gap if label and extra else 0) + w2 + (18 if note and show_icon else 0) + w3
+    sx = cx - total / 2
+    if show_icon:
+        icon(canvas, int(sx + 16), y, 1.0)
+    d = ImageDraw.Draw(canvas)
+    x = sx + (40 if show_icon else 0)
+    if label:
+        text(d, (x, y), label, size, anchor="lm")
+        x += w1 + gap
+    if extra:
+        text(d, (x, y + 2), extra, size - 6, fill=extra_col, anchor="lm")
+        x += w2
+    if note:
+        text(d, (x + (18 if show_icon else 0), y + 1), note, 22, fill=(205, 218, 245), anchor="lm", stroke=2)
+
+
 def draw_identity(canvas, player, x, top, is_blue):
+    """name / player trophies / clan name / clan WAR trophies (purple)."""
     cx = x + PW // 2
     clan = player.get("clan") or {}
     clan_name = clean(clan.get("name", ""))
@@ -1059,36 +1211,22 @@ def draw_identity(canvas, player, x, top, is_blue):
     if troop:
         draw_tower_troop(canvas, player, x, top)
     d = ImageDraw.Draw(canvas)
-    has_tr = player.get("startingTrophies") is not None or player.get("trophyChange")
 
     y = top + NAME_Y
     name = clean(player.get("name", "?")) or "?"
     text(d, (cx, y), name, fit(name, PW - (240 if troop else 70), 54, 22), stroke=5)
-    tagline = str(player.get("tag") or "").upper()
-    if player.get("globalRank"):
-        tagline += f"  ·  GLOBAL #{player['globalRank']:,}"
-    if tagline.strip():
-        y += 44
-        text(d, (cx, y), tagline.strip(), 22, fill=(205, 218, 245), stroke=2)
+    if has_player_row(player):
+        y += 46
+        tr, ch, gr = player_row_values(player)
+        _icon_row(canvas, cx, y, trophy, f"{tr:,}" if tr is not None else "", f"{ch:+d}" if ch else "",
+                  (120, 255, 140) if (ch or 0) > 0 else (255, 150, 150), 34, f"GLOBAL #{gr:,}" if gr else "")
     if clan_name:
-        y += 34
-        text(d, (cx, y), clan_name, fit(clan_name, PW - (260 if troop else 120), 30, 18), fill=(225, 232, 250), stroke=3)
-    if has_tr:
-        y += 42
-        tr, ch = player.get("startingTrophies"), player.get("trophyChange")
-        label = f"{tr:,}" if tr is not None else ""
-        extra = f"{ch:+d}" if ch else ""
-        w1 = text_width(label, 36) if label else 0
-        w2 = text_width(extra, 30) if extra else 0
-        total = 36 + w1 + (14 if label and extra else 0) + w2
-        sx = cx - total / 2
-        trophy(canvas, int(sx + 16), y, 1.1)
+        y += ROW_H if has_player_row(player) else 46
         d = ImageDraw.Draw(canvas)
-        if label:
-            text(d, (sx + 40, y), label, 36, anchor="lm")
-        if extra:
-            col = (120, 255, 140) if ch > 0 else (255, 150, 150)
-            text(d, (sx + 40 + w1 + (14 if label else 0), y + 2), extra, 30, fill=col, anchor="lm")
+        text(d, (cx, y), clan_name, fit(clan_name, PW - (260 if troop else 120), 30, 18), fill=(225, 232, 250), stroke=3)
+        if has_war_row(player):
+            y += 38
+            _icon_row(canvas, cx, y, trophy_war, f"{clan['clanWarTrophies']:,}", "", size=28)
 
 
 def draw_deck(canvas, player, cards, x, top, cards_off, panel_h):
@@ -1283,12 +1421,14 @@ def mode_label(battle, n):
     if t == "boatbattle":
         return " · ".join(x for x in ("Clan War", "Boat Battle", period_label(battle)) if x)
     mode = pretty_mode((battle.get("gameMode") or {}).get("name", ""))
+    if is_war(battle):                          # every war battle is 1v1 - no need to say it
+        mode = re.sub(r"\s*\b1v1\b", "", mode).strip()
     parts = [mode or "Battle"]
     if is_war(battle) and not re.sub(r"[^a-z]", "", mode.lower()).startswith(("cw", "clanwar")):
         # special rules inside a clan war (Triple Elixir, Sudden Death, ...): keep the CW part
         kind = "Duel" if "duel" in t else "Battle"
-        parts = [f"CW {kind} {n}v{n}"] + ([mode] if mode else [])
-    elif f"{n}v{n}" not in mode.replace(" ", "").lower():
+        parts = [f"CW {kind}"] + ([mode] if mode else [])
+    elif not is_war(battle) and f"{n}v{n}" not in mode.replace(" ", "").lower():
         parts.insert(0, f"{n}v{n}")
     if DECK_SELECTION.get(battle.get("deckSelection")):
         parts.append(DECK_SELECTION[battle["deckSelection"]])
@@ -1491,8 +1631,7 @@ def render_single(battle, team, opp, n, out_path, tz, debug):
     head = HEAD_H if SHOW_CROWNS else (128 if sub else 100)
     if SHOW_EMBLEM:
         head = max(head, HEAD_H)
-    has_tr = any(q.get("startingTrophies") is not None or q.get("trophyChange") for q in team[:n] + opp[:n])
-    poff = 0 if has_tr else TR_ROW                 # no trophy row: tighten instead of leaving a gap
+    poff = identity_rows_off(team[:n] + opp[:n])     # rows nobody has: tighten instead of leaving a gap
     ph, co = PANEL_H - poff, CARDS_OFF - poff
     body = n * ph + (n - 1) * PANEL_GAP
     H = head + body + FOOT_H
@@ -1519,8 +1658,7 @@ def render_single(battle, team, opp, n, out_path, tz, debug):
 
 def render_duel(battle, tp, op, rt, ro, out_path, tz, debug):
     rc = len(rt)
-    has_tr = any(q.get("startingTrophies") is not None or q.get("trophyChange") for q in (tp, op))
-    ih = IDENT_H if has_tr else IDENT_H - TR_ROW
+    ih = IDENT_H - identity_rows_off([tp, op])
     per = period_label(battle)
     head = HEAD_H if SHOW_CROWNS else (128 if per else 100)       # no score row -> compact header
     if SHOW_EMBLEM:
@@ -1565,10 +1703,9 @@ def render_duel(battle, tp, op, rt, ro, out_path, tz, debug):
         text(d, (mx - 14, y), fmt(a.get("crowns")), 34, fill=cl, anchor="rm", stroke=0)
         text(d, (mx, y), "-", 34, fill=(120, 126, 160), stroke=0)
         text(d, (mx + 14, y), fmt(b.get("crowns")), 34, fill=cr, anchor="lm", stroke=0)
-        letter, colr = (("W", (40, 170, 80)) if winners[i] > 0 else ("L", (210, 60, 50)) if winners[i] < 0
-                        else ("D", (130, 136, 160)))
-        rrect(canvas, (CEN_X + CEN_W - 62, y - 15, CEN_X + CEN_W - 30, y + 15), 8, fill=colr + (255,))
-        text(ImageDraw.Draw(canvas), (CEN_X + CEN_W - 46, y), letter, 20, stroke=0)
+        if winners[i] != 0:             # blue crown = the blue side won the round, red crown = the red side won it
+            crown(canvas, CEN_X + CEN_W - 50, y + 2, (70, 160, 255) if winners[i] > 0 else (255, 90, 130), 0.5)
+            d = ImageDraw.Draw(canvas)
 
     for i, (a, b) in enumerate(views):
         top = y0 + i * (DECK_H + BLOCK_GAP)
@@ -1590,6 +1727,14 @@ def hex_pts(cx, cy, r):
 
 def hex_badge(canvas, cx, cy, r, kind, number):
     """Tower-shaped hexagon badge: 'wood' (towers at start) / 'red' (destroyed) / 'steel' (remaining)."""
+    asset_name = {"wood": "tower_start", "red": "tower_destroyed", "steel": "tower_left"}[kind]
+    art = asset_by_name(asset_name)
+    if art is not None:
+        art = art.resize((int(r * 1.8), int(r * 2.0)), Image.LANCZOS)
+        paste_rgba(canvas, art, int(cx - art.width / 2), int(cy - art.height / 2))
+        text(ImageDraw.Draw(canvas), (cx, cy + 2), str(number), int(r * 1.1), fill=(255, 255, 255),
+             stroke=max(3, int(r / 10)), stroke_fill=(30, 20, 20))
+        return
     pal = {"wood": ((60, 62, 76), (196, 202, 214), (180, 110, 52)),
            "red": ((92, 10, 10), (226, 120, 110), (200, 38, 38)),
            "steel": ((40, 46, 66), (170, 180, 205), (92, 104, 140))}[kind]
@@ -1613,7 +1758,7 @@ def hex_badge(canvas, cx, cy, r, kind, number):
 
 
 def boat_icon(canvas, cx, cy, s=1.0):
-    if _asset_icon(canvas, [("boat",), ("clanboat",)], cx, cy, 78 * s):
+    if _asset_icon(canvas, "boat_battle", cx, cy, 78 * s):
         return
     hex_badge(canvas, cx, cy, 36 * s, "wood", "")
 
@@ -1640,7 +1785,7 @@ def draw_defenses(canvas, cards, x, top, panel_h):
     w, h, gap, cols = 82, 98, 12, 6
     rows = (len(cards) + cols - 1) // cols
     total_h = rows * h + (rows - 1) * 32
-    y0 = top + 200 + ((panel_h - 70 - 200) - total_h) / 2
+    y0 = top + BOAT_CARDS_OFF + 26 + ((panel_h - 70 - BOAT_CARDS_OFF - 26) - total_h) / 2
     text(ImageDraw.Draw(canvas), (x + PW // 2, y0 - 26), "BOAT DEFENSES", 20, fill=(225, 235, 255), stroke=2)
     x0 = x + (PW - (cols * w + (cols - 1) * gap)) // 2
     for i, c in enumerate(cards):
@@ -1668,19 +1813,17 @@ def render_boat(battle, out_path, tz, debug):
     text(ImageDraw.Draw(canvas), (W // 2, 182), "BOAT BATTLE" + (f"  ·  {per.upper()}" if per else ""), 28,
          fill=(225, 230, 245), stroke=3)
 
-    for x, pl, role, blue, you in ((PL_X, left, lrole, True, you_left), (PR_X, right, rrole, False, not you_left)):
+    for x, pl, role, blue in ((PL_X, left, lrole, True), (PR_X, right, rrole, False)):
         panel_bg(canvas, x, BOAT_HEAD, BOAT_PANEL_H, blue)
         if role:
             role_pill(canvas, x + PW // 2, BOAT_HEAD + 28, role, (40, 70, 160) if blue else (160, 40, 40))
-        if you:
-            role_pill(canvas, x + PW - 52, BOAT_HEAD + 28, "YOU", (30, 30, 50))
         fix_king_hp([pl], [])
         draw_identity(canvas, pl, x, BOAT_HEAD + 22, blue)
         cards = pl.get("cards", [])
         if len(cards) > 8:
             draw_defenses(canvas, cards, x, BOAT_HEAD, BOAT_PANEL_H)
         elif cards:
-            draw_deck(canvas, pl, cards, x, BOAT_HEAD, 208, BOAT_PANEL_H)
+            draw_deck(canvas, pl, cards, x, BOAT_HEAD, BOAT_CARDS_OFF, BOAT_PANEL_H)
         if debug:
             debug_print(pl, cards)
 
@@ -1721,7 +1864,7 @@ PATH_LEAGUE_NAMES = {7: "Ultimate Champion"}
 def prep_display(battle):
     """Hide numbers that would mislead (display only; the outcome was already decided)."""
     t = str(battle.get("type", "")).lower()
-    hide = (t == "pathoflegend" and battle.get("leagueNumber") != 7) or t in ("tournament", "boatbattle")
+    hide = (t == "pathoflegend" and battle.get("leagueNumber") != 7) or t == "tournament"
     if hide:
         for p in battle.get("team", []) + battle.get("opponent", []):
             p["startingTrophies"] = None
@@ -1818,13 +1961,14 @@ def demo_battle(duel=False):
 
 
 def demo_boat():
-    attacker = {"name": "lm57800", "tag": "#ATT", "clan": {"tag": "#C", "name": "1FranceGDC"}, "startingTrophies": 13562,
+    attacker = {"name": "lm57800", "tag": "#ATT", "clan": {"tag": "#C", "name": "1FranceGDC", "clanWarTrophies": 4310},
+                "startingTrophies": 13562,
                 "cards": _deck(3), "supportCards": [{"name": "Tower Princess", "level": 16, "maxLevel": 16,
                                                      "iconUrls": {"medium": "x"}}]}
     names = ["Cannon", "Tesla", "Mortar", "Inferno Tower", "Bomb Tower", "Tombstone", "Goblin Hut", "Furnace",
              "X-Bow", "Barbarian Hut", "Elixir Collector", "Zappies"]
-    defender = {"name": "TAO | Noppi❤️", "tag": "#DEF", "clan": {"tag": "#D", "name": "TheAddictedOnes"},
-                "startingTrophies": 0, "supportCards": [{"name": "Cannoneer", "level": 14, "maxLevel": 14,
+    defender = {"name": "TAO | Noppi❤️", "tag": "#DEF", "clan": {"tag": "#D", "name": "TheAddictedOnes", "clanWarTrophies": 5120},
+                "startingTrophies": 14000, "supportCards": [{"name": "Cannoneer", "level": 14, "maxLevel": 14,
                                                          "iconUrls": {"medium": "x"}}],
                 "cards": [_card(n, "common", 3, evo=3 if i == 0 else 0) for i, n in enumerate(names)]}
     return {"type": "boatBattle", "battleTime": "20261008T165725.000Z", "gameMode": {"name": "ClanWar_BoatBattle"},
@@ -2008,7 +2152,7 @@ def main():
     meta = get_cards_meta(a.key)
     for i, b in enumerate(chosen):
         enrich_cards(b, meta)
-        if SHOW_EMBLEM:
+        if SHOW_EMBLEM or wants_war_trophies(b):
             enrich_clans(b, a.key)
         kind = re.sub(r"[^a-z0-9]+", "", str(b.get("type", "battle")).lower())
         path = Path(a.out) / f"battle_{i + 1}_{kind}_{b['battleTime']}.png"
