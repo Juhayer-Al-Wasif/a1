@@ -1,12 +1,76 @@
+# ==============================================================================
+#  ja's watcher - config.json
+#
+#  * Lines starting with  #  are comments - they are ignored, so you can leave
+#    them in. Everything below shows ALL options with their DEFAULT value.
+#    Delete a line to use the default.
+#  * Keep the commas and "quotes" exactly like in the examples.
+#  * Webhook URLs are secrets: never write one here. Put each in GitHub
+#    (Settings -> Secrets and variables -> Actions) and write only the secret's
+#    NAME here.
+# ==============================================================================
 {
-  "bot_name": "ja's watcher",
- "timezone": "UTC",
- "embed_time": "discord",
-  "duel_images": "combined",
-  "font": "fugaz one",
-  "watch": [
-    { "clan": "#9U82JJ0Y", "webhook": "DISCORD_WEBHOOK_CLAN1" },
+  # ------------------------------- general -------------------------------------
+  "bot_name": "ja's watcher",        # name shown as the sender in Discord
+  "timezone": "UTC",                 # time printed INSIDE the image, e.g. "Asia/Dhaka", "America/New_York"
+  "api_base": "https://proxy.royaleapi.dev/v1",   # leave as is when using the RoyaleAPI proxy (key IP 45.79.218.79)
 
-    { "clan": "#V2GQU", "webhook": "DISCORD_WEBHOOK_CLAN2", "days": "battle" }
+  # ------------------------- the time under the image --------------------------
+  "embed_time": "discord",           # discord = each viewer sees it in THEIR own time zone  |  utc = fixed UTC text  |  none
+  "embed_time_style": "F",           # F "Tuesday, October 13, 2026 at 3:08 PM"   f "October 13, 2026 at 3:08 PM"
+                                     # D "October 13, 2026"  d "10/13/2026"  t "3:08 PM"  T "3:08:20 PM"  R "5 minutes ago"
+  "embed_time_position": "inside",    # below = thin box under the image  |  inside = a line in the first box
+
+  # ------------------------------- the picture ---------------------------------
+  "duel_images": "combined",         # combined = ONE image per duel  |  split = one image per round (each as big as a 1v1)
+  "font": "fugaz one",               # a font name (run: python cr_battlelog_image.py --font-sheet) or a file like "fonts/MyFont.ttf"
+                                     # names: fugaz one, lilita one, luckiest guy, titan one, paytone one, rowdies, passion one,
+                                     #        bangers, chango, bowlby one, russo one, black han sans, poppins
+  "credit": "crafted with 🫶🏻 by ja",    # small line at the bottom of every image ("" = hide it)
+  "credit_color": "#E1E6F5",         # colour of that whole line  (#RRGGBB)
+  "credit_name_color": "",           # colour of ONLY the last word ("ja"); "" = same as credit_color
+
+  # -------------------------- missing files / warnings -------------------------
+  "warnings_webhook": "DISCORD_WEBHOOK_WARNINGS",  # secret NAME of your warnings channel's webhook ("" = only print in the log)
+  "warnings_repeat_days": 1,         # remind about a still-missing file every N days (0 = tell only once)
+  "assets_dir": "assets",            # folder (in the repo) where you add the missing icons / card images - see assets/README.md
+
+  # --------------------------- look & feel (all optional) ----------------------
+  "image": {
+    "war_trophies": "war",           # purple clan-war trophies under the clan name: war = only war battles | always | never
+    "tower_troop": true,             # small tower-troop card in the top-left corner of each player panel
+    "card_stretch": 1.0,             # card height factor (1.15 = taller cards, 0.9 = flatter)
+    "rarity_frames": false,          # coloured rarity frame behind each card
+    "show_crowns": false,            # crown score in the header (same number as TOWERS TAKEN)
+    "clan_emblem": false,            # clan badge on top of each panel
+    "background": "",                # your own background image: a file in the repo or a link; "" = built-in
+    "background_dim": 0.4,           # how much to darken that background (0 - 1)
+    "background_blur": 0             # blur radius for that background
+  },
+
+  # ------------------------------ what to watch --------------------------------
+  # One { ... } per thing you follow: paste the tag, name the webhook's secret.
+  #
+  #   "clan" or "player"  the tag (a clan = all of its current members)          REQUIRED (exactly one)
+  #   "webhook"           NAME of the GitHub secret holding the Discord webhook   REQUIRED
+  #   "modes"             what to post - any of:                                  default: clan -> ["war"], player -> ["all"]
+  #                         war       clan-war 1v1s, duels, boat battles
+  #                         duel      war duels only          boat     boat battles only
+  #                         ladder    Trophy Road             ranked   Path of Legend / ranked
+  #                         challenge classic + grand challenges (can't be told apart)
+  #                         event     other event modes       friendly friendly + clanmate battles
+  #                         tournament  2v2  special (Triple Elixir, Sudden Death, Draft...)   all
+  #                         "mode:triple elixir"  any game-mode name containing that text
+  #                         "type:trail"          any battle type containing that text
+  #   "results"           all | win | loss                                        default: all
+  #   "days"              all | battle | training   (war battles only)             default: all
+  #   "name"              a label for the log                                     default: the tag
+  #   "bot_name"          sender name just for this watch                         default: the top-level bot_name
+  "watch": [
+    { "clan": "#9U82JJ0Y", "webhook": "DISCORD_WEBHOOK_CLAN1", "days": "all" },
+
+    { "clan": "#V2GQU", "webhook": "DISCORD_WEBHOOK_CLAN2", "days": "all" }
+
+  #  { "player": "#PLAYERTAG", "webhook": "DISCORD_WEBHOOK_JA", "modes": ["ladder", "ranked"], "results": "win" }
   ]
 }
