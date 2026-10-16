@@ -103,8 +103,38 @@ def save_state(path, st):
 
 
 # ------------------------------------------------------------------------ config
+def strip_comments(text):
+    """Lets config.json contain  # comments  (and // comments, and trailing commas). '#' inside "quotes" is kept,
+    so tags like "#ABC123" are fine."""
+    out, i, n, in_str, esc = [], 0, len(text), False, False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True; out.append(c); i += 1; continue
+        if c == "#" or (c == "/" and text[i + 1:i + 2] == "/"):
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        out.append(c); i += 1
+    return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+
+
+
 def load_config(path):
-    cfg = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        cfg = json.loads(strip_comments(Path(path).read_text(encoding="utf-8")))
+    except json.JSONDecodeError as e:
+        sys.exit(f"config.json isn't valid ({e}). Check commas and quotes near line {e.lineno}.")
     raw = list(cfg.get("watch") or cfg.get("watches") or [])
     for c in cfg.get("clans", []):                       # old format: {"clans": [{"name","tag","webhook_env"}]}
         raw.append({"clan": c["tag"], "webhook": c.get("webhook_env") or c.get("webhook"), "name": c.get("name")})
@@ -135,8 +165,13 @@ def load_config(path):
             errors.append(f'{where}: "days" must be all, battle or training')
         watches.append({"kind": kind, "tag": tag, "webhook": str(w["webhook"]), "modes": modes, "results": results,
                         "days": days, "label": w.get("name") or tag, "bot_name": w.get("bot_name")})
-    if str(cfg.get("duel_images", "split")).lower() not in ("split", "combined"):
+    if str(cfg.get("duel_images", "combined")).lower() not in ("split", "combined"):
         errors.append('"duel_images" must be split (one image per round) or combined (one tall image)')
+    if cfg.get("warnings_repeat_days") is not None:
+        try:
+            float(cfg["warnings_repeat_days"])
+        except (TypeError, ValueError):
+            errors.append('"warnings_repeat_days" must be a number (0 = mention each missing file only once)')
     if str(cfg.get("embed_time", "discord")).lower() == "utc":
         log('NOTE: "embed_time": "utc" prints a FIXED UTC time that is the same for everyone. For a time every '
             'viewer sees in their own time zone, set "embed_time": "discord" (or delete the line).')
@@ -375,6 +410,66 @@ class Run:
         self.summary = []
         self.tmp = Path(tempfile.mkdtemp(prefix="crwatch_"))
 
+    # ---- missing-file warnings
+    def flush_missing(self):
+        """Post what the renderer could not find (with the EXACT file name to add) to the warnings webhook.
+        Outstanding items are re-checked against the assets folder every pass and repeated every N days."""
+        now = time.time()
+        every = float(self.cfg.get("warnings_repeat_days", 7))
+        seen = self.state.setdefault("missing", {})
+        pending = self.state.setdefault("missing_info", {})
+        pending.update(dict(crimg.MISSING))              # what this pass could not find ...
+        crimg.MISSING.clear()
+        for k in list(pending):                          # ... plus what is still outstanding from before,
+            if crimg.asset_exists(pending[k]["file"]):   # minus whatever you have added since
+                pending.pop(k); seen.pop(k, None)
+        fresh = {k: v for k, v in pending.items()
+                 if seen.get(k) is None or (every > 0 and now - seen[k] >= every * 86400)}
+        if not fresh:
+            return
+        groups = {"Card images": [], "Icons and plates": [], "Fonts": []}
+        for key, info in sorted(fresh.items()):
+            if key.startswith("card:"):
+                groups["Card images"].append(f"• `assets/cards/{info['file']}` - {info['what']}")
+            elif key.startswith("font:"):
+                groups["Fonts"].append(f"• `{info['file']}` - {info['what']}")
+            else:
+                groups["Icons and plates"].append(f"• `assets/icons/{info['file']}` - {info['what']}")
+        text_blocks = [f"**{title}**\n" + "\n".join(lines) for title, lines in groups.items() if lines]
+        for tb in text_blocks:
+            log("MISSING FILES:\n" + tb)
+        ref = self.cfg.get("warnings_webhook")
+        hook = None if self.dry else (resolve_webhook(ref) if ref else None)
+        if not hook:
+            return                                   # no warnings channel configured (or dry run): console only
+        footer = (f"Add the file(s) to the assets/ folder of your repo - any sub-folder, .png or .webp, capitals and "
+                  f"_ - don't matter. Each one is mentioned again every {int(every)} days until it exists."
+                  if every else "Add the file(s) to the assets/ folder of your repo; each one is only mentioned once.")
+        embeds, cur = [], ""
+        for tb in text_blocks:
+            for chunk in [tb[i:i + 3500] for i in range(0, len(tb), 3500)]:
+                if len(cur) + len(chunk) > 3500:
+                    embeds.append(cur); cur = ""
+                cur += chunk + "\n\n"
+        if cur.strip():
+            embeds.append(cur)
+        payload = {"username": (self.cfg.get("bot_name") or DEFAULT_BOT)[:80], "allowed_mentions": {"parse": []},
+                   "embeds": [{"title": "⚠️ Files to add" + (f" ({i + 1}/{len(embeds)})" if len(embeds) > 1 else ""),
+                               "description": e.strip(), "color": 0xF1C40F,
+                               **({"footer": {"text": footer}} if i == len(embeds) - 1 else {})}
+                              for i, e in enumerate(embeds)]}
+        try:
+            r = requests.post(hook, json=payload, timeout=30)
+            if r.status_code == 429:
+                time.sleep(float(r.json().get("retry_after", 2)) + 0.5)
+                r = requests.post(hook, json=payload, timeout=30)
+            r.raise_for_status()
+            for k in fresh:
+                seen[k] = now
+        except Exception as e:
+            log(f"warnings webhook failed: {e!r}")
+            self.problems += 1
+
     # ---- shared helpers
     def cards_meta(self):
         if self.meta is None:
@@ -404,6 +499,8 @@ class Run:
     def render(self, battle, period):
         """-> [(filename, png bytes)]: one image, or one per round for a split duel; [] if it can't be drawn."""
         crimg.enrich_cards(battle, self.cards_meta())
+        if crimg.SHOW_EMBLEM or crimg.wants_war_trophies(battle):
+            crimg.enrich_clans(battle, self.api.key)          # clanWarTrophies (cached per clan for the run)
         if period:
             battle["_period"] = period
         files = crimg.render_battle_files(battle, self.tmp / "battle.png", self.cfg.get("timezone", "UTC"))
@@ -582,6 +679,36 @@ class Run:
                              "note": note or (f"held back {held}" if held else "")})
 
 
+def apply_image_options(im):
+    """The "image" block of config.json -> the renderer's settings."""
+    known = {"background", "background_dim", "background_blur", "card_stretch", "rarity_frames", "tower_troop",
+             "clan_emblem", "show_crowns", "war_trophies"}
+    unknown = sorted(set(im) - known)
+    if unknown:
+        sys.exit(f'config.json "image" has unknown option(s) {unknown}. Allowed: {sorted(known)}')
+    if im.get("background"):
+        crimg.BG_PATH = str(im["background"])
+    if "background_dim" in im:
+        crimg.BG_DIM = float(im["background_dim"])
+    if "background_blur" in im:
+        crimg.BG_BLUR = float(im["background_blur"])
+    if "card_stretch" in im:
+        crimg.CARD_STRETCH = float(im["card_stretch"])
+    if "rarity_frames" in im:
+        crimg.RARITY_FRAMES = bool(im["rarity_frames"])
+    if "tower_troop" in im:
+        crimg.SHOW_TOWER_TROOP = bool(im["tower_troop"])
+    if "clan_emblem" in im:
+        crimg.SHOW_EMBLEM = bool(im["clan_emblem"])
+    if "show_crowns" in im:
+        crimg.SHOW_CROWNS = bool(im["show_crowns"])
+    if "war_trophies" in im:
+        wt = str(im["war_trophies"]).lower()
+        if wt not in ("war", "always", "never"):
+            sys.exit('"image.war_trophies" must be war, always or never')
+        crimg.SHOW_WAR_TROPHIES = wt
+
+
 def write_summary(run):
     """Shows a per-watch table on the GitHub Actions run page (no need to open the log)."""
     path = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -616,7 +743,7 @@ def main():
     base = os.environ.get("CR_API_BASE") or cfg.get("api_base") or DEFAULT_BASE
     crimg.API_BASE = base
     crimg.setup_fonts(cfg.get("font"))
-    crimg.DUEL_SPLIT = str(cfg.get("duel_images", "split")).lower() == "split"
+    crimg.DUEL_SPLIT = str(cfg.get("duel_images", "combined")).lower() == "split"
     crimg.apply_layout()
     if cfg.get("credit") is not None:
         crimg.CREDIT = cfg["credit"]
@@ -624,8 +751,10 @@ def main():
         crimg.CREDIT_COLOR = crimg.parse_color(cfg["credit_color"])
     if cfg.get("credit_name_color"):
         crimg.CREDIT_NAME_COLOR = crimg.parse_color(cfg["credit_name_color"])
-    if (HERE / "assets").is_dir():
-        crimg.ASSETS_DIR = str(HERE / "assets")
+    apply_image_options(cfg.get("image") or {})
+    assets = HERE / str(cfg.get("assets_dir") or "assets")
+    if assets.is_dir():
+        crimg.ASSETS_DIR = str(assets)
     run = Run(cfg, Api(a.key, base), a.dry_run, a.backfill, a.state)
 
     while True:
@@ -640,6 +769,7 @@ def main():
                 log("ERROR:", e); sys.exit(1)
             except Exception as e:
                 log(f"[{w['label']}] unexpected error: {e!r}"); run.problems += 1
+        run.flush_missing()
         if not a.dry_run:
             save_state(a.state, run.state)
         write_summary(run)
