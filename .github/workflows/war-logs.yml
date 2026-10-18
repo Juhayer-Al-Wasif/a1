@@ -2,7 +2,7 @@ name: War logs
 
 on:
   schedule:
-    - cron: "*/10 * * * *"        # every 10 min (GitHub may delay runs a few minutes; 5 is the minimum)
+    - cron: "7,17,27,37,47,57 * * * *"   # every 10 min, at :07 :17 :27 ... (not on the hour: GitHub is busiest there). Best effort - see README
   workflow_dispatch:
     inputs:
       backfill:
