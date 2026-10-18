@@ -45,6 +45,9 @@ SHOW_TOWER_TROOP = True
 CREDIT = "made with 🫶🏻 by ja"   # small line at the very bottom ("" to hide)
 CREDIT_COLOR = (225, 230, 245)   # colour of the whole credit line
 CREDIT_NAME_COLOR = None         # colour of just the last word ("ja"); None = same as CREDIT_COLOR
+SHOW_LEVEL_ADVANTAGE = True   # "LEVEL ADVANTAGE +x.x" under the clan name of the side whose cards have the higher average level
+SHOW_ULTIMATE = True         # Ultimate Champion rating instead of trophies for players who have one this season
+UC_LEAGUE = 10               # profile leagueNumber that means Ultimate Champion (the profile scale runs 1-10)
 SHOW_WAR_TROPHIES = "war"    # clan war trophies under the clan name: "war" (war battles only) / "always" / "never"
 SHOW_CROWNS = False       # crown score in the header duplicates 'TOWERS TAKEN'; --show-crowns brings it back
 ASSETS_DIR = None        # folder with official art (Fan Kit / cloned asset repos); see find/asset_img()
@@ -103,7 +106,7 @@ def apply_layout():
         PANEL_H, IDENT_H, CARDS_OFF, NAME_Y = 672, 242, 232, 56
 
 
-BOAT_HEAD, BOAT_PANEL_H, BOAT_CARDS_OFF = 215, 700, 262
+BOAT_HEAD, BOAT_PANEL_H, BOAT_CARDS_OFF = 100, 700, 262
 
 # ---------------------------------------------------------------- missing files ---
 # Everything the renderer wanted but couldn't find. The bot posts this list to the warnings webhook with the EXACT
@@ -127,7 +130,8 @@ ASSET_SPEC = {
     "trophy_war": ("PURPLE clan war trophy next to a clan's war trophies", ("war_trophy", "clan_war_trophy")),
     "level_blue": ("blue number plate for card levels 1-15 (the level number is drawn on top)", ("level",)),
     "level_max": ("number plate for max-level (16) cards (the number is drawn on top)", ("level_16", "maxed")),
-    "boat_battle": ("boat battle icon in the boat battle header", ("boat",)),
+    "ultimate_champion": ("Ultimate Champion medal next to a player's rating (replaces the trophy icon)", ("uc", "league_10")),
+    "level_advantage": ("small up-arrow in the LEVEL ADVANTAGE pill", ("level_up", "arrow_up")),
     "tower_start": ("hexagon badge behind the 'towers at start' number (boat battles)", ()),
     "tower_destroyed": ("hexagon badge behind the 'towers destroyed' number (boat battles)", ()),
     "tower_left": ("hexagon badge behind the 'towers left' number (boat battles)", ()),
@@ -580,6 +584,49 @@ def enrich_cards(battle, meta):
                     fix(c)
 
 
+PLAYER_CACHE = {}
+
+
+def player_profile(tag, key):
+    if tag in PLAYER_CACHE:
+        return PLAYER_CACHE[tag]
+    prof = None
+    if not OFFLINE:
+        try:
+            prof = api_get(f"/players/{enc(tag)}", key, soft=True)
+        except Exception:
+            prof = None
+    PLAYER_CACHE[tag] = prof
+    return prof
+
+
+def wants_player_lookup(battle):
+    return SHOW_ULTIMATE or str(battle.get("type", "")).lower() == "boatbattle"
+
+
+def enrich_players(battle, key):
+    """Fills in what the battle itself doesn't say:
+    * Ultimate Champion rating (profile currentPathOfLegendSeasonResult, leagueNumber == UC_LEAGUE) -> _uc_rating,
+      which replaces the trophy row. A ranked battle in the rated top league uses its own startingTrophies.
+    * boat battles carry no trophies at all -> the player's current trophies from the profile."""
+    t = str(battle.get("type", "")).lower()
+    for side in ("team", "opponent"):
+        for p in battle.get(side, []):
+            if SHOW_ULTIMATE and t == "pathoflegend" and battle.get("leagueNumber") == 7 and p.get("startingTrophies"):
+                p["_uc_rating"] = p["startingTrophies"]
+            need_tr = t == "boatbattle" and p.get("startingTrophies") is None
+            if not p.get("tag") or not (SHOW_ULTIMATE or need_tr):
+                continue
+            prof = player_profile(p["tag"], key)
+            if not prof:
+                continue
+            if need_tr and prof.get("trophies") is not None:
+                p["startingTrophies"] = prof["trophies"]
+            res = prof.get("currentPathOfLegendSeasonResult")
+            if SHOW_ULTIMATE and isinstance(res, dict) and res.get("leagueNumber") == UC_LEAGUE and res.get("trophies"):
+                p["_uc_rating"] = res["trophies"]
+
+
 def wants_war_trophies(battle):
     return SHOW_WAR_TROPHIES == "always" or (SHOW_WAR_TROPHIES == "war" and is_war(battle))
 
@@ -825,7 +872,10 @@ def _asset_icon(canvas, name, cx, cy, height):
     img = asset_by_name(name)
     if img is None:
         return False
-    img = img.resize((max(1, int(img.width * height / img.height)), int(height)), Image.LANCZOS)
+    w = img.width * height / img.height
+    if w > height * 1.25:                            # wide art: keep it inside a box so it can't run into the text
+        height, w = height * 1.25 * height / w, height * 1.25
+    img = img.resize((max(1, int(w)), max(1, int(height))), Image.LANCZOS)
     x, y = int(cx - img.width / 2), int(cy - img.height / 2)
     alpha_shadow(canvas, img, x, y, dy=3, radius=3, opacity=0.4)
     paste_rgba(canvas, img, x, y)
@@ -916,6 +966,25 @@ def trophy_war(canvas, cx, cy, s=1.0):
     if _asset_icon(canvas, "trophy_war", cx, cy, 42 * s):
         return
     _cup(canvas, cx, cy, s, (176, 98, 255), (62, 20, 120))
+
+
+def ultimate_icon(canvas, cx, cy, s=1.0):
+    """Ultimate Champion medal (purple ribbon medal with a gold crown)."""
+    if _asset_icon(canvas, "ultimate_champion", cx, cy, 44 * s):
+        return
+
+    def p(d, T, k):
+        P = lambda pts: T([(cx + x * s, cy + y * s) for x, y in pts])
+        d.polygon(P([(-9, 8), (-14, 21), (-8, 17), (-3, 21), (1, 8)]), fill=(150, 64, 235, 255), outline=(60, 20, 110, 255))
+        d.polygon(P([(9, 8), (14, 21), (8, 17), (3, 21), (-1, 8)]), fill=(118, 44, 205, 255), outline=(60, 20, 110, 255))
+        (a, b), = T([(cx, cy - 3 * s)])
+        r = 18 * s * k
+        d.ellipse([a - r, b - r, a + r, b + r], fill=(214, 150, 255, 255), outline=(66, 22, 124, 255), width=int(2.4 * s * k))
+        r2 = 13.5 * s * k
+        d.ellipse([a - r2, b - r2, a + r2, b + r2], fill=(150, 74, 238, 255))
+        d.polygon(P([(-8, 1), (-9, -8), (-4, -4), (0, -11), (4, -4), (9, -8), (8, 1)]), fill=(255, 205, 64, 255),
+                  outline=(110, 62, 8, 255))
+    aa(canvas, (cx - 26 * s, cy - 26 * s, cx + 26 * s, cy + 26 * s), p)
 
 
 def check_icon(canvas, cx, cy, s=1.0):
@@ -1166,16 +1235,67 @@ def player_row_values(player):
 
 def has_player_row(player):
     tr, ch, gr = player_row_values(player)
-    return tr is not None or bool(ch) or bool(gr)
+    return tr is not None or bool(ch) or bool(gr) or bool(player.get("_uc_rating"))
 
 
 def has_war_row(player):
     return (player.get("clan") or {}).get("clanWarTrophies") is not None
 
 
+def has_level_row(player):
+    return bool(player.get("_lvl_adv"))
+
+
 def identity_rows_off(players):
-    """How much to pull the layout up when NO player on the page has a player-trophy row / a war-trophy row."""
-    return (0 if any(has_player_row(q) for q in players) else ROW_H) + (0 if any(has_war_row(q) for q in players) else ROW_H)
+    """Layout shift: +1 row of height when NO player has a player-trophy row / a war-trophy row, and -1 row when any
+    player shows a LEVEL ADVANTAGE pill (the base layout reserves the two trophy rows)."""
+    off = (0 if any(has_player_row(q) for q in players) else ROW_H) + (0 if any(has_war_row(q) for q in players) else ROW_H)
+    return off - (ROW_H if any(has_level_row(q) for q in players) else 0)
+
+
+def _avg_level(cards):
+    lv = [display_level(c) for c in cards if c]
+    return sum(lv) / len(lv) if lv else None
+
+
+def set_level_advantage(team, opp, all_cards=False):
+    """Marks the first player of the side whose cards have the higher AVERAGE LEVEL with _lvl_adv (the difference);
+    nothing is marked when the averages are equal (to one decimal)."""
+    for q in team + opp:
+        q.pop("_lvl_adv", None)
+    if not SHOW_LEVEL_ADVANTAGE or not team or len(team) != len(opp):
+        return
+    def cards_of(players):
+        out = []
+        for q in players:
+            cs = q.get("cards", []) if all_cards else q.get("cards", [])[:8]
+            out += cs
+        return out
+    a, b = _avg_level(cards_of(team)), _avg_level(cards_of(opp))
+    if a is None or b is None:
+        return
+    diff = round(a - b, 1)
+    if abs(diff) >= 0.1:
+        (team[0] if diff > 0 else opp[0])["_lvl_adv"] = abs(diff)
+
+
+def level_up_icon(canvas, cx, cy, s=1.0):
+    if _asset_icon(canvas, "level_advantage", cx, cy, 30 * s):
+        return
+
+    def p(d, T, k):
+        P = lambda pts: T([(cx + x * s, cy + y * s) for x, y in pts])
+        d.polygon(P([(0, -13), (12, 1), (5, 1), (5, 12), (-5, 12), (-5, 1), (-12, 1)]), fill=(96, 236, 130, 255),
+                  outline=(20, 90, 44, 255))
+    aa(canvas, (cx - 16 * s, cy - 16 * s, cx + 16 * s, cy + 16 * s), p)
+
+
+def _level_row(canvas, cx, y, diff):
+    label = f"LEVEL ADVANTAGE +{diff:.1f}"
+    w = text_width(label, 22) + 58
+    rrect(canvas, (cx - w / 2, y - 17, cx + w / 2, y + 17), 17, fill=(8, 14, 40, 150))
+    level_up_icon(canvas, int(cx - w / 2 + 22), y, 0.85)
+    text(ImageDraw.Draw(canvas), (cx - w / 2 + 40, y + 1), label, 22, anchor="lm", stroke=2)
 
 
 def _icon_row(canvas, cx, y, icon, label, extra="", extra_col=(255, 255, 255), size=34, note=""):
@@ -1218,8 +1338,10 @@ def draw_identity(canvas, player, x, top, is_blue):
     if has_player_row(player):
         y += 46
         tr, ch, gr = player_row_values(player)
-        _icon_row(canvas, cx, y, trophy, f"{tr:,}" if tr is not None else "", f"{ch:+d}" if ch else "",
-                  (120, 255, 140) if (ch or 0) > 0 else (255, 150, 150), 34, f"GLOBAL #{gr:,}" if gr else "")
+        uc = player.get("_uc_rating")                # Ultimate Champion rating replaces the trophies
+        _icon_row(canvas, cx, y, ultimate_icon if uc else trophy, f"{uc:,}" if uc else (f"{tr:,}" if tr is not None else ""),
+                  f"{ch:+d}" if ch else "", (120, 255, 140) if (ch or 0) > 0 else (255, 150, 150), 34,
+                  f"GLOBAL #{gr:,}" if gr else "")
     if clan_name:
         y += ROW_H if has_player_row(player) else 46
         d = ImageDraw.Draw(canvas)
@@ -1227,6 +1349,9 @@ def draw_identity(canvas, player, x, top, is_blue):
         if has_war_row(player):
             y += 38
             _icon_row(canvas, cx, y, trophy_war, f"{clan['clanWarTrophies']:,}", "", size=28)
+    if has_level_row(player):
+        y += 38
+        _level_row(canvas, cx, y, player["_lvl_adv"])
 
 
 def draw_deck(canvas, player, cards, x, top, cards_off, panel_h):
@@ -1242,12 +1367,13 @@ def draw_deck(canvas, player, cards, x, top, cards_off, panel_h):
     if any("used" in c for c in cards):          # duel rounds: the API says which cards were actually played
         items.append(("check", f"{sum(1 for c in cards if c.get('used'))}/{len(cards)}", "CARDS PLAYED"))
     centers = [cx - 100, cx + 100] if len(items) == 2 else [cx - 190, cx, cx + 190]
+    iy = by - 8                                      # icons sit ABOVE the label line (gap >= 15 px)
     for (kind, val, label), ic in zip(items, centers):
-        {"drop": lambda: drop(canvas, ic - 34, by, 1.15), "cycle": lambda: cycle_icon(canvas, ic - 34, by, 1.2),
-         "check": lambda: check_icon(canvas, ic - 34, by, 1.2)}[kind]()
+        {"drop": lambda: drop(canvas, ic - 34, iy, 0.88), "cycle": lambda: cycle_icon(canvas, ic - 34, iy, 0.92),
+         "check": lambda: check_icon(canvas, ic - 34, iy, 0.98)}[kind]()
         d = ImageDraw.Draw(canvas)
-        text(d, (ic - 8, by - 3), val, 38, anchor="lm")
-        text(d, (ic, by + 36), label, 17, fill=(225, 235, 255), stroke=2)
+        text(d, (ic - 8, by - 7), val, 38, anchor="lm")
+        text(d, (ic, by + 42), label, 17, fill=(225, 235, 255), stroke=2)
 
 
 # ------------------------------------------------------------------- recap --
@@ -1273,7 +1399,7 @@ def side_stats(players):
             "hp": tot(hp)}
 
 
-def draw_recap(canvas, team, opp, top, height, title="GAME RECAP"):
+def draw_recap(canvas, team, opp, top, height, title="GAME RECAP", war=True):
     rrect(canvas, (CEN_X, top, CEN_X + CEN_W, top + height), 30, fill=(250, 251, 255, 255))
     big = height >= 560
     title_h = 100 if big else 66
@@ -1281,7 +1407,7 @@ def draw_recap(canvas, team, opp, top, height, title="GAME RECAP"):
     text(d, (CEN_X + CEN_W // 2, top + title_h * 0.5), title, 38 if big else 32, fill=(30, 34, 70), stroke=0)
     a, b = side_stats(team), side_stats(opp)
     rows = [("TOWERS TAKEN", "crowns"), ("ELIXIR LEAKED", "leak"), ("KING TOWER HP", "king"),
-            ("PRINCESS TOWERS HP", "prin"), ("FINAL HITPOINTS", "hp")]
+            ("PRINCESS TOWERS HP" if war else "CROWN TOWERS HP", "prin"), ("FINAL HITPOINTS", "hp")]
     step = (height - title_h - 14) / len(rows)
     L, R = CEN_X + 24, CEN_X + CEN_W - 24
     base = 40 if big else 32
@@ -1392,8 +1518,8 @@ def period_label(battle):
 
 
 def header_sub(battle):
-    parts = [x for x in (battle.get("_sub"), (period_label(battle) or "").upper(),
-                         ranked_sub(battle) or special_sub(battle)) if x]
+    """Header subtitle: only things the footer does not already say (Battle Day / mode names live in the footer)."""
+    parts = [x for x in (battle.get("_sub"), ranked_sub(battle)) if x]
     return "  ·  ".join(parts) or None
 
 
@@ -1515,7 +1641,7 @@ def get_rounds(player):
 
 def round_view(player, r):
     base = {k: player.get(k) for k in ("name", "tag", "clan", "startingTrophies", "trophyChange",
-                                       "supportCards", "globalRank")}
+                                       "supportCards", "globalRank", "_uc_rating")}
     base.update({k: r.get(k) for k in ("crowns", "kingTowerHitPoints", "princessTowersHitPoints", "elixirLeaked")})
     base["cards"] = r.get("cards", [])
     return base
@@ -1563,9 +1689,9 @@ def battle_outcome(b):
 
 def result_style(win, lose):
     if win > lose:
-        return "WIN", (120, 255, 140)
+        return "WIN", BLUE_TOP
     if win < lose:
-        return "LOSE", (255, 110, 110)
+        return "LOSE", RED_TOP
     return "DRAW", (220, 225, 240)
 
 
@@ -1631,6 +1757,7 @@ def render_single(battle, team, opp, n, out_path, tz, debug):
     head = HEAD_H if SHOW_CROWNS else (128 if sub else 100)
     if SHOW_EMBLEM:
         head = max(head, HEAD_H)
+    set_level_advantage(team[:n], opp[:n])
     poff = identity_rows_off(team[:n] + opp[:n])     # rows nobody has: tighten instead of leaving a gap
     ph, co = PANEL_H - poff, CARDS_OFF - poff
     body = n * ph + (n - 1) * PANEL_GAP
@@ -1651,16 +1778,24 @@ def render_single(battle, team, opp, n, out_path, tz, debug):
                 draw_deck(canvas, p, p.get("cards", []), x, top, co, ph)
                 if debug:
                     debug_print(p, p.get("cards", []))
-    draw_recap(canvas, team, opp, head, body, title=battle.get("_recap_title") or "GAME RECAP")
+    draw_recap(canvas, team, opp, head, body, title=battle.get("_recap_title") or "GAME RECAP", war=is_war(battle))
     draw_footer(canvas, battle, H, tz, n)
     canvas.convert("RGB").save(out_path, quality=95)
 
 
 def render_duel(battle, tp, op, rt, ro, out_path, tz, debug):
     rc = len(rt)
+    tp.pop("_lvl_adv", None); op.pop("_lvl_adv", None)           # levels of EVERY card used across the rounds
+    tmp_t = {"cards": [c for r in rt for c in r.get("cards", [])]}
+    tmp_o = {"cards": [c for r in ro for c in r.get("cards", [])]}
+    set_level_advantage([tmp_t], [tmp_o], all_cards=True)
+    if tmp_t.get("_lvl_adv"):
+        tp["_lvl_adv"] = tmp_t["_lvl_adv"]
+    if tmp_o.get("_lvl_adv"):
+        op["_lvl_adv"] = tmp_o["_lvl_adv"]
     ih = IDENT_H - identity_rows_off([tp, op])
     per = period_label(battle)
-    head = HEAD_H if SHOW_CROWNS else (128 if per else 100)       # no score row -> compact header
+    head = HEAD_H if SHOW_CROWNS else 100                         # no score row -> compact header
     if SHOW_EMBLEM:
         head = max(head, HEAD_H)
     y0 = head + ih + BLOCK_GAP
@@ -1681,7 +1816,7 @@ def render_duel(battle, tp, op, rt, ro, out_path, tz, debug):
         sub = ("ROUNDS WON" + f"  ·  CROWNS {tcrowns} - {ocrowns}" + (f"  ·  {per.upper()}" if per else ""))
         draw_header(canvas, res, col, tw, ow, sub=sub)
     else:
-        draw_header(canvas, res, col, tw, ow, sub=(per.upper() if per else None), score=False)
+        draw_header(canvas, res, col, tw, ow, sub=None, score=False)
 
     for x, p, blue in ((PL_X, tp, True), (PR_X, op, False)):
         panel_bg(canvas, x, head, ih, blue)
@@ -1757,22 +1892,6 @@ def hex_badge(canvas, cx, cy, r, kind, number):
          stroke_fill={"wood": (70, 30, 8), "red": (60, 10, 10), "steel": (20, 26, 52)}[kind])
 
 
-def boat_icon(canvas, cx, cy, s=1.0):
-    if _asset_icon(canvas, "boat_battle", cx, cy, 78 * s):
-        return
-    hex_badge(canvas, cx, cy, 36 * s, "wood", "")
-
-    def p(d, T, k):                              # white anchor on the wooden badge
-        col = (245, 245, 250, 255)
-        d.line(T([(cx, cy - 14 * s), (cx, cy + 16 * s)]), fill=col, width=int(4 * s * k))
-        d.line(T([(cx - 9 * s, cy - 6 * s), (cx + 9 * s, cy - 6 * s)]), fill=col, width=int(4 * s * k))
-        (a, b), = T([(cx, cy - 18 * s)])
-        d.ellipse([a - 4.5 * s * k, b - 4.5 * s * k, a + 4.5 * s * k, b + 4.5 * s * k], outline=col, width=int(3 * s * k))
-        (a, b), (c, e) = T([(cx - 14 * s, cy - 4 * s), (cx + 14 * s, cy + 24 * s)])
-        d.arc([a, b, c, e], 20, 160, fill=col, width=int(4 * s * k))
-    aa(canvas, (cx - 40 * s, cy - 40 * s, cx + 40 * s, cy + 40 * s), p)
-
-
 def role_pill(canvas, cx, cy, label, fill):
     w = 24 + 15 * len(label)
     rrect(canvas, (cx - w / 2, cy - 15, cx + w / 2, cy + 15), 15, fill=fill + (255,), outline=(255, 255, 255, 190), width=2)
@@ -1808,10 +1927,6 @@ def render_boat(battle, out_path, tz, debug):
     res, col = result_style(battle.get("_outcome", 0), 0)
     d = ImageDraw.Draw(canvas)
     text(d, (W // 2, 50), res, 64, fill=col, stroke=6)
-    boat_icon(canvas, W // 2, 126, 1.0)
-    per = period_label(battle)
-    text(ImageDraw.Draw(canvas), (W // 2, 182), "BOAT BATTLE" + (f"  ·  {per.upper()}" if per else ""), 28,
-         fill=(225, 230, 245), stroke=3)
 
     for x, pl, role, blue in ((PL_X, left, lrole, True), (PR_X, right, rrole, False)):
         panel_bg(canvas, x, BOAT_HEAD, BOAT_PANEL_H, blue)
@@ -1950,6 +2065,9 @@ def demo_battle(duel=False):
     opp = {"name": "TEF丨Soudy✨Kun 👨‍👩‍👧 🇧🇩", "tag": "#Y", "clan": clanB, "crowns": 0,
            "elixirLeaked": 14.84, "kingTowerHitPoints": 0, "princessTowersHitPoints": [0, 0], "cards": _deck(5), "globalRank": 412,
            "supportCards": [{"name": "Cannoneer", "level": 14, "maxLevel": 14, "iconUrls": {"medium": "x"}}]}
+    for c in opp["cards"][:5]:                       # lower levels on the red side -> LEVEL ADVANTAGE for blue
+        c["level"], c["maxLevel"] = 14, 16
+    team["_uc_rating"] = 2379                        # a player with an Ultimate Champion rating this season
     b = {"battleTime": "20261010T192308.000Z", "type": "pathOfLegend", "gameMode": {"name": "Ranked1v1_NewArena"},
          "arena": {"name": "Legendary Arena"}, "team": [team], "opponent": [opp],
          "leagueNumber": 4}
@@ -2024,7 +2142,7 @@ def render_report(b, path, tz, debug):
 
 # -------------------------------------------------------------------- main --
 def main():
-    global OFFLINE, DUEL_SPLIT, CREDIT, CREDIT_COLOR, CREDIT_NAME_COLOR, SHOW_CROWNS, ASSETS_DIR, SHOW_EMBLEM, SHOW_TOWER_TROOP, RARITY_FRAMES, WAR_LEAGUES, SHOW_TIER, CARD_STRETCH, BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR, ESTIMATE_LEAGUE
+    global OFFLINE, SHOW_LEVEL_ADVANTAGE, SHOW_ULTIMATE, DUEL_SPLIT, CREDIT, CREDIT_COLOR, CREDIT_NAME_COLOR, SHOW_CROWNS, ASSETS_DIR, SHOW_EMBLEM, SHOW_TOWER_TROOP, RARITY_FRAMES, WAR_LEAGUES, SHOW_TIER, CARD_STRETCH, BG_PATH, BG_DIM, BG_BLUR, BADGE_DIR, ESTIMATE_LEAGUE
     ap = argparse.ArgumentParser(description="Clash Royale battle log image generator")
     ap.add_argument("--tag", default=DEFAULT_TAG)
     ap.add_argument("--key", default=os.environ.get("CR_API_KEY"))
@@ -2044,6 +2162,8 @@ def main():
     ap.add_argument("--no-tower-troop", action="store_true", help="hide the tower troop card")
     ap.add_argument("--credit", default=None, help='footer credit text (default: "made with 🫶🏻 by ja")')
     ap.add_argument("--no-credit", action="store_true", help="hide the footer credit")
+    ap.add_argument("--no-level-advantage", action="store_true", help="hide the LEVEL ADVANTAGE pill")
+    ap.add_argument("--no-ultimate", action="store_true", help="don't swap trophies for the Ultimate Champion rating")
     ap.add_argument("--duel-split", action="store_true",
                     help="draw each duel round as its own normal-sized image (the bot does this by default)")
     ap.add_argument("--font-sheet", action="store_true",
@@ -2087,6 +2207,7 @@ def main():
     except ValueError as e:
         sys.exit(str(e))
     DUEL_SPLIT = a.duel_split
+    SHOW_LEVEL_ADVANTAGE, SHOW_ULTIMATE = not a.no_level_advantage, not a.no_ultimate
     if a.no_credit:
         CREDIT = ""
     elif a.credit is not None:
@@ -2154,6 +2275,8 @@ def main():
         enrich_cards(b, meta)
         if SHOW_EMBLEM or wants_war_trophies(b):
             enrich_clans(b, a.key)
+        if wants_player_lookup(b):
+            enrich_players(b, a.key)
         kind = re.sub(r"[^a-z0-9]+", "", str(b.get("type", "battle")).lower())
         path = Path(a.out) / f"battle_{i + 1}_{kind}_{b['battleTime']}.png"
         if a.dump:
