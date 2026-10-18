@@ -501,6 +501,8 @@ class Run:
         crimg.enrich_cards(battle, self.cards_meta())
         if crimg.SHOW_EMBLEM or crimg.wants_war_trophies(battle):
             crimg.enrich_clans(battle, self.api.key)          # clanWarTrophies (cached per clan for the run)
+        if crimg.wants_player_lookup(battle):
+            crimg.enrich_players(battle, self.api.key)        # Ultimate Champion rating; boat-battle trophies (cached)
         if period:
             battle["_period"] = period
         files = crimg.render_battle_files(battle, self.tmp / "battle.png", self.cfg.get("timezone", "UTC"))
@@ -516,7 +518,7 @@ class Run:
         if "friendly" in categories(b):
             color = 0xFFFFFF                      # friendly battles: not a win or a loss
         else:
-            color = {1: 0x2480F5, -1: 0xE74C3C, 0: 0x95A5A6}[r]
+            color = {1: 0x2480F5, -1: 0xDE483A, 0: 0x95A5A6}[r]          # exactly the blue / red king colours of the image
         main = {"description": (side_text(b.get("team"), "🟦") + "\n" + side_text(b.get("opponent"), "🟥"))[:4000],
                 "color": color}
         when = parse_bt(b["battleTime"])
@@ -682,7 +684,8 @@ class Run:
 def apply_image_options(im):
     """The "image" block of config.json -> the renderer's settings."""
     known = {"background", "background_dim", "background_blur", "card_stretch", "rarity_frames", "tower_troop",
-             "clan_emblem", "show_crowns", "war_trophies"}
+             "clan_emblem", "show_crowns", "war_trophies", "level_advantage", "ultimate_champion",
+             "ultimate_champion_league"}
     unknown = sorted(set(im) - known)
     if unknown:
         sys.exit(f'config.json "image" has unknown option(s) {unknown}. Allowed: {sorted(known)}')
@@ -702,6 +705,12 @@ def apply_image_options(im):
         crimg.SHOW_EMBLEM = bool(im["clan_emblem"])
     if "show_crowns" in im:
         crimg.SHOW_CROWNS = bool(im["show_crowns"])
+    if "level_advantage" in im:
+        crimg.SHOW_LEVEL_ADVANTAGE = bool(im["level_advantage"])
+    if "ultimate_champion" in im:
+        crimg.SHOW_ULTIMATE = bool(im["ultimate_champion"])
+    if "ultimate_champion_league" in im:
+        crimg.UC_LEAGUE = int(im["ultimate_champion_league"])
     if "war_trophies" in im:
         wt = str(im["war_trophies"]).lower()
         if wt not in ("war", "always", "never"):
