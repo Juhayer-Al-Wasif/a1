@@ -26,7 +26,7 @@
   "font": "fugaz one",               # a font name (run: python cr_battlelog_image.py --font-sheet) or a file like "fonts/MyFont.ttf"
                                      # names: fugaz one, lilita one, luckiest guy, titan one, paytone one, rowdies, passion one,
                                      #        bangers, chango, bowlby one, russo one, black han sans, poppins
-  "credit": "crafted with 🫶🏻 by ja",    # small line at the bottom of every image ("" = hide it)
+  "credit": "designed with 🫶🏻 by ja",    # small line at the bottom of every image ("" = hide it)
   "credit_color": "#E1E6F5",         # colour of that whole line  (#RRGGBB)
   "credit_name_color": "",           # colour of ONLY the last word ("ja"); "" = same as credit_color
 
@@ -38,6 +38,11 @@
   # --------------------------- look & feel (all optional) ----------------------
   "image": {
     "war_trophies": "war",           # purple clan-war trophies under the clan name: war = only war battles | always | never
+    "level_advantage": true,         # under the clan name of the side whose cards have the higher AVERAGE level, a pill
+                                     # "LEVEL ADVANTAGE +1.2". Only shown when the averages differ. (duels: all rounds' cards)
+    "ultimate_champion": true,       # a player who has an Ultimate Champion rating this season shows it (medal + e.g. 2,379)
+                                     # INSTEAD of their trophies. Costs 1 profile lookup per player of each posted battle.
+    "ultimate_champion_league": 10,  # the profile "leagueNumber" that means Ultimate Champion (change only if Supercell does)
     "tower_troop": true,             # small tower-troop card in the top-left corner of each player panel
     "card_stretch": 1.0,             # card height factor (1.15 = taller cards, 0.9 = flatter)
     "rarity_frames": false,          # coloured rarity frame behind each card
