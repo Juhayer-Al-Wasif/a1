@@ -1583,24 +1583,24 @@
   "#9U82JJ0Y": {
    "anchor": null,
    "index": 15,
-   "last_pass": 1792547659.03716,
+   "last_pass": 1792547694.5687442,
    "since": 1792492549.9682121,
    "type": "training"
   },
   "#V2GQU": {
    "anchor": null,
    "index": 15,
-   "last_pass": 1792547659.1600363,
+   "last_pass": 1792547694.687986,
    "since": 1792492550.0826867,
    "type": "training"
   }
  },
  "missing": {
-  "icon:boat_battle": 1792461291.8136353,
+  "icon:boat_battle": 1792547694.913948,
   "icon:level_advantage": 1792504182.9745708,
-  "icon:tower_destroyed": 1792461291.8136353,
-  "icon:tower_left": 1792461291.8136353,
-  "icon:tower_start": 1792461291.8136353
+  "icon:tower_destroyed": 1792547694.913948,
+  "icon:tower_left": 1792547694.913948,
+  "icon:tower_start": 1792547694.913948
  },
  "missing_info": {
   "icon:boat_battle": {
