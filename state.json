@@ -1587,7 +1587,7 @@
     "lo": 1792921385.5114853
    },
    "index": 20,
-   "last_pass": 1792979700.248175,
+   "last_pass": 1792979736.1122835,
    "since": 1792921421.1313858,
    "type": "warDay"
   },
@@ -1598,17 +1598,17 @@
     "lo": 1792922349.5246587
    },
    "index": 20,
-   "last_pass": 1792979700.4335878,
+   "last_pass": 1792979736.2835386,
    "since": 1792922385.3595302,
    "type": "warDay"
   }
  },
  "missing": {
-  "icon:boat_battle": 1792893330.77271,
+  "icon:boat_battle": 1792979736.9438655,
   "icon:level_advantage": 1792936283.2965825,
-  "icon:tower_destroyed": 1792893330.77271,
-  "icon:tower_left": 1792893330.77271,
-  "icon:tower_start": 1792893330.77271
+  "icon:tower_destroyed": 1792979736.9438655,
+  "icon:tower_left": 1792979736.9438655,
+  "icon:tower_start": 1792979736.9438655
  },
  "missing_info": {
   "icon:boat_battle": {
