@@ -1587,7 +1587,7 @@
     "lo": 1793267049.1213236
    },
    "index": 24,
-   "last_pass": 1793325359.5271122,
+   "last_pass": 1793325400.8913944,
    "since": 1793267084.6038027,
    "type": "colosseum"
   },
@@ -1598,17 +1598,17 @@
     "lo": 1793267873.2939677
    },
    "index": 24,
-   "last_pass": 1793325359.6550875,
+   "last_pass": 1793325401.0162401,
    "since": 1793267908.8307822,
    "type": "colosseum"
   }
  },
  "missing": {
-  "icon:boat_battle": 1793238986.4944685,
+  "icon:boat_battle": 1793325401.5905275,
   "icon:level_advantage": 1793281948.1451304,
-  "icon:tower_destroyed": 1793238986.4944685,
-  "icon:tower_left": 1793238986.4944685,
-  "icon:tower_start": 1793238986.4944685
+  "icon:tower_destroyed": 1793325401.5905275,
+  "icon:tower_left": 1793325401.5905275,
+  "icon:tower_start": 1793325401.5905275
  },
  "missing_info": {
   "icon:boat_battle": {
@@ -3821,9 +3821,7 @@
     "#908G2CQPL|20261030T011517.000Z",
     "#JLC8J0V20|20261030T015415.000Z"
    ],
-   "recheck": [
-    "#JLC8J0V20"
-   ],
+   "recheck": [],
    "seen": {
     "#208JP9JVL": "20261025T162021.000Z",
     "#208QY20P": "20261029T223506.000Z",
