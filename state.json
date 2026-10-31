@@ -1587,7 +1587,7 @@
     "lo": 1793439788.213143
    },
    "index": 26,
-   "last_pass": 1793440729.286355,
+   "last_pass": 1793440780.3037732,
    "since": 1793439823.6895597,
    "type": "colosseum"
   },
@@ -1598,7 +1598,7 @@
     "lo": 1793440693.3980308
    },
    "index": 26,
-   "last_pass": 1793440729.3972123,
+   "last_pass": 1793440780.4188166,
    "since": 1793440729.3972123,
    "type": "colosseum"
   }
@@ -3976,9 +3976,12 @@
     "#RVU820CYL|20261031T091343.000Z",
     "#RVU820CYL|20261031T091831.000Z",
     "#2G9RY8VVR|20261031T095211.000Z",
-    "#2G9RY8VVR|20261031T095546.000Z"
+    "#2G9RY8VVR|20261031T095546.000Z",
+    "#LQ20VGY|20261031T095856.000Z"
    ],
-   "recheck": [],
+   "recheck": [
+    "#LQ20VGY"
+   ],
    "seen": {
     "#208JP9JVL": "20261025T162021.000Z",
     "#208QY20P": "20261031T014950.000Z",
@@ -4384,9 +4387,9 @@
      0
     ],
     "#LQ20VGY": [
-     8,
-     0,
-     1300,
+     10,
+     2,
+     1800,
      0
     ],
     "#P0GG928CR": [
@@ -6671,55 +6674,7 @@
     "#20R0U0JQ8|20261031T060346.000Z",
     "#20R0U0JQ8|20261031T060721.000Z"
    ],
-   "recheck": [
-    "#R2YJ8QRG",
-    "#8Y889QQ0",
-    "#PYQ2GY2L",
-    "#JVJV9GQLQ",
-    "#2CQQ0L2CP",
-    "#RR9L9YQ0",
-    "#8UQRG928U",
-    "#2YJ9LPYLL",
-    "#9Q8G0RC9",
-    "#289YCU80J",
-    "#PRRRU2JPR",
-    "#92P8GCJ",
-    "#2G0U8V2QJ",
-    "#20L28G9RP",
-    "#GG88G9PV",
-    "#9U0RUYRR",
-    "#C98GC2QL0",
-    "#2GPLY2CLR",
-    "#20R0U0JQ8",
-    "#LUUY9LJP",
-    "#CQQVVPRG",
-    "#2UJY2U9YL",
-    "#R8RYQGG82",
-    "#GJJUGU2Y8",
-    "#9L992LRRV",
-    "#9UVGVG9V",
-    "#U8C9Q88PQ",
-    "#J0JJC8LU",
-    "#PYR8C9UV",
-    "#U9R8UU2R9",
-    "#LRQ0U20",
-    "#VQUQQJJ",
-    "#22Y9JCU08",
-    "#U92C8U92",
-    "#2YCUC2Y8J",
-    "#2LGCU8RQV",
-    "#P8P9LPG",
-    "#2L2C8LRR",
-    "#LULJ0P82",
-    "#88Q2YJ2Y",
-    "#8RPVQQ88V",
-    "#8L8LPQYP",
-    "#JP9QPQY8V",
-    "#QJ8R9YUV8",
-    "#PYL9YYC",
-    "#20V82GG8R",
-    "#92Y0QGVR"
-   ],
+   "recheck": [],
    "seen": {
     "#208QY20P": "20261020T210859.000Z",
     "#20L28G9RP": "20261031T092816.000Z",
