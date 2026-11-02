@@ -1587,7 +1587,7 @@
     "lo": 1793526220.2416523
    },
    "index": 27,
-   "last_pass": 1793584644.038222,
+   "last_pass": 1793584680.36129,
    "since": 1793526256.0554972,
    "type": "colosseum"
   },
@@ -1598,17 +1598,17 @@
     "lo": 1793527089.5842197
    },
    "index": 27,
-   "last_pass": 1793584644.1478078,
+   "last_pass": 1793584680.4751039,
    "since": 1793527125.108112,
    "type": "colosseum"
   }
  },
  "missing": {
-  "icon:boat_battle": 1793498263.7697515,
+  "icon:boat_battle": 1793584680.6915426,
   "icon:level_advantage": 1793541168.053062,
-  "icon:tower_destroyed": 1793498263.7697515,
-  "icon:tower_left": 1793498263.7697515,
-  "icon:tower_start": 1793498263.7697515
+  "icon:tower_destroyed": 1793584680.6915426,
+  "icon:tower_left": 1793584680.6915426,
+  "icon:tower_start": 1793584680.6915426
  },
  "missing_info": {
   "icon:boat_battle": {
