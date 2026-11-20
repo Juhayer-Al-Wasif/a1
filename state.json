@@ -1587,7 +1587,7 @@
     "lo": 1795168628.8118794
    },
    "index": 18,
-   "last_pass": 1795183129.1850073,
+   "last_pass": 1795183165.5487032,
    "since": 1795168679.630669,
    "type": "warDay"
   },
@@ -1598,7 +1598,7 @@
     "lo": 1795168592.7730703
    },
    "index": 18,
-   "last_pass": 1795183129.3010085,
+   "last_pass": 1795183165.6663475,
    "since": 1795168628.9227939,
    "type": "warDay"
   }
@@ -1606,7 +1606,7 @@
  "missing": {
   "card:giant:evo": 1795181467.2406602,
   "icon:boat_battle": 1795140342.106872,
-  "icon:level_advantage": 1795096744.3720632,
+  "icon:level_advantage": 1795183165.8884525,
   "icon:tower_destroyed": 1795140342.106872,
   "icon:tower_left": 1795140342.106872,
   "icon:tower_start": 1795140342.106872
